@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+# Repo root must be on sys.path for `from app...` (Streamlit Cloud runs pages with a narrow path).
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import streamlit as st
 
 from app.db import init_db
