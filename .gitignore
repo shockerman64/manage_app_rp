@@ -42,5 +42,6 @@ Thumbs.db
 .idea/
 
 
-# CSV
+# CSV & xlsx
 *.csv
+*.xlsx
