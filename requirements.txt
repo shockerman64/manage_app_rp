@@ -1,8 +1,0 @@
-streamlit
-pandas
-sqlalchemy
-psycopg[binary]
-python-dotenv
-openpyxl
-plotly
-pytest
