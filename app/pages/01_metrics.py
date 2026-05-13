@@ -1,4 +1,5 @@
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -10,23 +11,87 @@ import plotly.express as px
 import streamlit as st
 
 from app.services.analytics import query_frame
-from app.ui import amount_column_config, format_count, format_money, format_percent, section_title
+from app.ui import (
+    BRAND_INTERNAL,
+    amount_column_config,
+    empty_state,
+    format_count,
+    format_money,
+    format_percent,
+    page_header,
+    rename_columns,
+    section_title,
+    setup_page,
+)
 
-st.set_page_config(page_title="Metrics", page_icon=":bar_chart:", layout="wide")
+setup_page("Metrics", ":bar_chart:")
+page_header(
+    f"{BRAND_INTERNAL} Metrics",
+    f"Performance KPIs and daily trends for {BRAND_INTERNAL} deposits and withdrawals.",
+)
 
-st.title("Metrics")
-st.caption("Performance metrics from normalized transaction data.")
+
+# ---------------------------------------------------------------------------
+# Filters
+# ---------------------------------------------------------------------------
+
+
+PRESETS = ["Last 7 days", "Last 30 days", "This month", "Last 90 days", "All", "Custom"]
+if "metrics_preset" not in st.session_state:
+    st.session_state["metrics_preset"] = "Last 30 days"
 
 section_title("Filters")
-col1, col2 = st.columns(2)
-with col1:
-    start_date = st.date_input("Start date", value=None)
-with col2:
-    end_date = st.date_input("End date", value=None)
+filter_cols = st.columns([1.3, 2])
+with filter_cols[0]:
+    preset = st.selectbox("Date range preset", PRESETS, key="metrics_preset")
+
+
+def _resolve_preset(preset_value: str) -> tuple[date | None, date | None]:
+    today = date.today()
+    if preset_value == "Last 7 days":
+        return today - timedelta(days=6), today
+    if preset_value == "Last 30 days":
+        return today - timedelta(days=29), today
+    if preset_value == "Last 90 days":
+        return today - timedelta(days=89), today
+    if preset_value == "This month":
+        return today.replace(day=1), today
+    if preset_value == "All":
+        return None, None
+    return None, None
+
+
+if preset == "Custom":
+    with filter_cols[1]:
+        default_range = (date.today() - timedelta(days=29), date.today())
+        date_range = st.date_input(
+            "Custom date range",
+            value=default_range,
+            format="DD/MM/YYYY",
+            key="metrics_custom_range",
+        )
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+        else:
+            start_date, end_date = default_range
+else:
+    start_date, end_date = _resolve_preset(preset)
+    with filter_cols[1]:
+        if start_date and end_date:
+            label = f"{start_date.strftime('%d %b %Y')}  ->  {end_date.strftime('%d %b %Y')}"
+        else:
+            label = "All available dates"
+        st.text_input("Active range", value=label, disabled=True, key="metrics_active_range_display")
 
 if start_date and end_date and start_date > end_date:
     st.error("Start date must be earlier than or equal to end date.")
     st.stop()
+
+
+# ---------------------------------------------------------------------------
+# Build WHERE
+# ---------------------------------------------------------------------------
+
 
 where = ["source_system = 'internal'"]
 params: dict = {}
@@ -38,6 +103,12 @@ if end_date:
     params["end_date"] = end_date
 
 where_sql = " AND ".join(where)
+
+
+# ---------------------------------------------------------------------------
+# KPI summary
+# ---------------------------------------------------------------------------
+
 
 try:
     kpi = query_frame(
@@ -62,8 +133,12 @@ except Exception as exc:
     st.caption(str(exc))
     st.stop()
 
-if kpi.empty:
-    st.info("No data found for current filters.")
+if kpi.empty or int(kpi.iloc[0]["transaction_count"] or 0) == 0:
+    empty_state(
+        "No data found for the selected range.",
+        f"Try a wider date preset, or import a {BRAND_INTERNAL} CSV from the Home page.",
+        icon=":bar_chart:",
+    )
     st.stop()
 
 summary = kpi.iloc[0]
@@ -76,6 +151,12 @@ cards_top[2].metric("Net Flow", format_money(net_flow))
 cards_bottom[0].metric("Transactions", format_count(summary["transaction_count"]))
 cards_bottom[1].metric("Approval Rate", format_percent(summary["approval_rate"]))
 cards_bottom[2].metric("Avg Deposit", format_money(summary["avg_deposit"]))
+
+
+# ---------------------------------------------------------------------------
+# Daily trend + quick insights
+# ---------------------------------------------------------------------------
+
 
 try:
     daily = query_frame(
@@ -98,21 +179,47 @@ except Exception as exc:
 
 trend_col, insight_col = st.columns([2, 1], gap="large")
 with trend_col:
+    section_title("Daily Trend", "Deposits vs Withdrawals over time.")
     if not daily.empty:
-        melted = daily.melt(id_vars="day", value_vars=["deposits", "withdraws"], var_name="type", value_name="amount")
-        fig = px.line(melted, x="day", y="amount", color="type", title="Daily Deposits vs Withdrawals")
+        melted = daily.melt(
+            id_vars="day",
+            value_vars=["deposits", "withdraws"],
+            var_name="Type",
+            value_name="Amount",
+        )
+        melted["Type"] = melted["Type"].map({"deposits": "Deposits", "withdraws": "Withdrawals"})
+        fig = px.line(
+            melted,
+            x="day",
+            y="Amount",
+            color="Type",
+            labels={"day": "Date"},
+            color_discrete_map={"Deposits": "#34D399", "Withdrawals": "#F87171"},
+        )
+        fig.update_layout(
+            height=340,
+            margin=dict(l=10, r=10, t=10, b=10),
+            template="plotly_dark",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            hovermode="x unified",
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No daily trend data for the selected filters.")
+        empty_state("No daily trend data for the selected filters.", "Try widening the date range.")
 
 with insight_col:
     st.subheader("Quick Insights")
     st.metric("Avg Withdraw", format_money(summary["avg_withdraw"]))
-    st.metric("Selected Date Start", str(start_date) if start_date else "All")
-    st.metric("Selected Date End", str(end_date) if end_date else "All")
+    st.metric("Selected Start", str(start_date) if start_date else "All")
+    st.metric("Selected End", str(end_date) if end_date else "All")
     st.caption("Use filters to narrow trends and download focused records.")
 
-breakdown_cols = st.columns(3)
+
+# ---------------------------------------------------------------------------
+# Breakdown tables
+# ---------------------------------------------------------------------------
+
+
 try:
     by_method = query_frame(
         f"""
@@ -152,41 +259,46 @@ except Exception as exc:
     by_status = pd.DataFrame()
     by_merchant = pd.DataFrame()
 
+
+def _render_breakdown(frame: pd.DataFrame, label_col: str, label_name: str) -> None:
+    if frame.empty:
+        empty_state(f"No {label_name.lower()} data available.", "Try widening the date range.")
+        return
+    display = rename_columns(
+        frame,
+        {
+            label_col: label_name,
+            "txn_count": "Transactions",
+            "total_amount": "Total Amount",
+        },
+    )
+    st.dataframe(
+        display,
+        column_config=amount_column_config(["Total Amount"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+section_title("Breakdowns")
+breakdown_cols = st.columns(3)
 with breakdown_cols[0]:
     st.subheader("By Pay Method")
-    if by_method.empty:
-        st.info("No pay method data available.")
-    else:
-        st.dataframe(
-            by_method,
-            column_config=amount_column_config(["total_amount"]),
-            use_container_width=True,
-            hide_index=True,
-        )
+    _render_breakdown(by_method, "pay_method", "Pay Method")
 with breakdown_cols[1]:
     st.subheader("By Status")
-    if by_status.empty:
-        st.info("No status data available.")
-    else:
-        st.dataframe(
-            by_status,
-            column_config=amount_column_config(["total_amount"]),
-            use_container_width=True,
-            hide_index=True,
-        )
+    _render_breakdown(by_status, "status", "Status")
 with breakdown_cols[2]:
     st.subheader("Top Merchants")
-    if by_merchant.empty:
-        st.info("No merchant data available.")
-    else:
-        st.dataframe(
-            by_merchant,
-            column_config=amount_column_config(["total_amount"]),
-            use_container_width=True,
-            hide_index=True,
-        )
+    _render_breakdown(by_merchant, "merchant", "Merchant")
 
-section_title("Filtered Data Export", "Showing top 500 rows in-app. Download for full filtered records.")
+
+# ---------------------------------------------------------------------------
+# Filtered detail rows + export
+# ---------------------------------------------------------------------------
+
+
+section_title("Filtered Records", "Showing top 500 rows in-app. Download for the full filtered set.")
 try:
     details = query_frame(
         f"""
@@ -205,17 +317,36 @@ except Exception as exc:
     details = pd.DataFrame()
 
 if details.empty:
-    st.info("No detail rows match the current filters.")
+    empty_state("No detail rows match the current filters.", "Try widening the date range or clearing presets.")
 else:
+    display = rename_columns(
+        details,
+        {
+            "source_system": "Source",
+            "ticket_no": "Ticket #",
+            "correlation_id": "Correlation ID",
+            "merchant": "Merchant",
+            "login_id": "Login ID",
+            "member_id": "Member ID",
+            "txn_type": "Type",
+            "pay_method": "Pay Method",
+            "currency": "Currency",
+            "amount": "Amount",
+            "fee": "Fee",
+            "status": "Status",
+            "txn_datetime_local": "Local Time",
+        },
+    )
+    display["Source"] = display["Source"].map(lambda v: BRAND_INTERNAL if str(v).lower() == "internal" else v)
     st.dataframe(
-        details.head(500),
-        column_config=amount_column_config(["amount", "fee"]),
+        display.head(500),
+        column_config=amount_column_config(["Amount", "Fee"]),
         use_container_width=True,
         hide_index=True,
     )
     csv_bytes = details.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Download filtered CSV",
+        ":arrow_down: Download filtered CSV",
         data=csv_bytes,
         file_name="metrics_filtered.csv",
         mime="text/csv",
