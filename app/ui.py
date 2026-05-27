@@ -12,6 +12,7 @@ BRAND_VENDOR = "OASIS PAY"
 SOURCE_LABELS: dict[str, str] = {
     "internal": BRAND_INTERNAL,
     "vendor": BRAND_VENDOR,
+    "members": "Members",
 }
 
 LABEL_TO_SOURCE: dict[str, str] = {label: source for source, label in SOURCE_LABELS.items()}

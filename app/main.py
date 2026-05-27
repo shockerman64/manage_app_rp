@@ -10,6 +10,7 @@ import streamlit as st
 from app.db import init_db
 from app.services.analytics import get_import_history, query_frame
 from app.services.ingestion import import_internal_csv, import_vendor_file
+from app.services.member_ingestion import import_members_csv
 from app.ui import (
     BRAND_INTERNAL,
     BRAND_VENDOR,
@@ -53,6 +54,7 @@ with st.sidebar:
     st.caption("Navigation")
     st.markdown(
         "- **Home**: import data\n"
+        "- **RP1M Overview**: deposits, withdrawals, FTD\n"
         "- **Metrics**: KPIs & trends\n"
         "- **View Transactions**: browse all rows\n"
         "- **Reconciliation**: match RP1M vs OASIS PAY"
@@ -114,10 +116,17 @@ else:
 # ---------------------------------------------------------------------------
 
 
-section_title("Upload Transactions", f"Pick a source tab to import a {BRAND_INTERNAL} or {BRAND_VENDOR} file.")
+section_title(
+    "Upload Data",
+    f"Import {BRAND_INTERNAL} transactions, member registry (for FTD), or {BRAND_VENDOR} gateway files.",
+)
 
-tab_internal, tab_vendor = st.tabs(
-    [f":inbox_tray:  Upload {BRAND_INTERNAL} Transactions", f":inbox_tray:  Upload {BRAND_VENDOR} Transactions"]
+tab_internal, tab_members, tab_vendor = st.tabs(
+    [
+        f":inbox_tray:  Upload {BRAND_INTERNAL} Transactions",
+        ":busts_in_silhouette:  Upload Members",
+        f":inbox_tray:  Upload {BRAND_VENDOR} Transactions",
+    ]
 )
 
 with tab_internal:
@@ -142,6 +151,34 @@ with tab_internal:
                     st.success(f"Imported {BRAND_INTERNAL} rows: {result.inserted_rows:,}")
             except Exception as exc:
                 st.error(f"{BRAND_INTERNAL} import failed.")
+                st.caption(str(exc))
+
+with tab_members:
+    st.caption(
+        "Import the member registry CSV (Member ID, Login ID, Date Created required). "
+        "Used by RP1M Overview for first-time deposit (FTD) metrics. "
+        "Re-importing updates existing members by Member ID."
+    )
+    members_file = st.file_uploader(
+        "Upload Members CSV",
+        type=["csv"],
+        key="members_uploader",
+    )
+    if members_file is not None:
+        if st.button("Import Members File", type="primary", use_container_width=True):
+            try:
+                with st.status("Importing members CSV in batches...", expanded=False) as status:
+                    result = import_members_csv(members_file.name, members_file.getvalue())
+                    status.update(label="Import finished.", state="complete")
+                if result.duplicate_file:
+                    st.warning("This members file was already imported (same hash).")
+                else:
+                    msg = f"Upserted members: {result.upserted_rows:,}"
+                    if result.skipped_rows:
+                        msg += f" (skipped {result.skipped_rows:,} rows missing Member ID or Date Created)"
+                    st.success(msg)
+            except Exception as exc:
+                st.error("Members import failed.")
                 st.caption(str(exc))
 
 with tab_vendor:

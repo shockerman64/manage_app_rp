@@ -8,8 +8,10 @@ Internal tool for manual daily transaction imports, persistent metrics, transact
 ## Features
 
 - Manual **RP1M** CSV import with dedupe by file hash
+- Manual **Members** CSV import (member registry for FTD) with upsert by Member ID
 - Manual **OASIS PAY** XLSX/CSV import with dedupe by file hash
-- Persistent Postgres storage (raw + normalized + reconciliation tables)
+- Persistent Postgres storage (raw + normalized + members + reconciliation tables)
+- **RP1M Overview** page: Approved deposit/withdraw totals, member-aware **first-time deposit (FTD)** metrics, date presets, daily breakdown table, CSV export
 - **Metrics** page: KPIs (deposit, withdraw, net flow, approval rate), date presets, daily trend chart, breakdowns by pay method / status / merchant
 - **View Transactions** page: unified browser for every RP1M + OASIS PAY row with rich filters (date presets, source, type, status, pay method, amount range, free-text search), KPI strip, daily volume chart, paginated table, and full-CSV export
 - **Reconciliation** page:
@@ -20,10 +22,11 @@ Internal tool for manual daily transaction imports, persistent metrics, transact
 
 ## Pages / Navigation
 
-1. **Home** (`app/main.py`) - upload RP1M and OASIS PAY files via tabs, import history
-2. **Metrics** (`app/pages/01_metrics.py`) - RP1M KPIs and trends
-3. **View Transactions** (`app/pages/02_view_transactions.py`) - browse all RP1M + OASIS PAY rows
-4. **Reconciliation** (`app/pages/03_reconciliation.py`) - run / inspect reconciliation
+1. **Home** (`app/main.py`) - upload RP1M transactions, Members registry, and OASIS PAY files via tabs; import history
+2. **RP1M Overview** (`app/pages/04_rp1m_overview.py`) - Approved deposit/withdraw and FTD KPIs with daily breakdown
+3. **Metrics** (`app/pages/01_metrics.py`) - RP1M KPIs and trends (all statuses)
+4. **View Transactions** (`app/pages/02_view_transactions.py`) - browse all RP1M + OASIS PAY rows
+5. **Reconciliation** (`app/pages/03_reconciliation.py`) - run / inspect reconciliation
 
 The DB init button now lives in the sidebar's collapsed **Admin** expander; the sidebar also shows a live "Database connected / unavailable" status pill.
 
@@ -36,7 +39,7 @@ The DB init button now lives in the sidebar's collapsed **Admin** expander; the 
    pip install -r requirements.txt
    ```
 
-3. Create `.env` from `.env.example` and set `DATABASE_URL`.
+3. Create `.env` from `.env.example` and set `DATABASE_URL` (and optionally `FTD_CUTOFF_MONTH`, default `2026-04`).
 4. Run app:
 
    ```bash
@@ -47,10 +50,24 @@ The DB init button now lives in the sidebar's collapsed **Admin** expander; the 
 
 1. Open the sidebar **Admin** expander and click **Initialize / Migrate DB**
 2. Open the **RP1M** upload tab and import an internal CSV
-3. Open the **OASIS PAY** upload tab and import a vendor XLSX/CSV
-4. Open the **Metrics** page for KPI dashboards
-5. Open **View Transactions** to filter / search / export across both sources
-6. Open **Reconciliation** and click **Run Reconciliation** to compare QRIS rows
+3. Open the **Upload Members** tab and import the member registry CSV (required for FTD on RP1M Overview)
+4. Open the **OASIS PAY** upload tab and import a vendor XLSX/CSV
+5. Open **RP1M Overview** for Approved deposit/withdraw and FTD metrics
+6. Open the **Metrics** page for broader RP1M KPI dashboards
+7. Open **View Transactions** to filter / search / export across both sources
+8. Open **Reconciliation** and click **Run Reconciliation** to compare QRIS rows
+
+### Members CSV (FTD)
+
+Required columns: `Member ID`, `Login ID`, `Date Created`.
+
+Optional mapped columns include `Group`, `Merchant`, `Member Group`, `Currency`, `Verify Status`, `Status`, `Last Update`, `Last Login Time`. All other export columns are stored in `raw_data`.
+
+### FTD cutoff month
+
+Set `FTD_CUTOFF_MONTH=YYYY-MM` in `.env` (first day of that month is used in SQL). Members registered **before** that month treat their first **Approved** deposit on or after the cutoff as FTD. Members registered **on or after** the cutoff use their earliest **Approved** deposit in loaded transaction data.
+
+RP1M transaction history before the cutoff month is not in the database; FTD is a business rule aligned to partial imports, not lifetime platform truth.
 
 ## Database Compatibility Note
 
@@ -65,4 +82,4 @@ The DB init button now lives in the sidebar's collapsed **Admin** expander; the 
 
 Schema migration SQL is in `sql/schema.sql`.
 
-The schema retains `source_system IN ('internal', 'vendor')` and the original raw-table names (`internal_transactions_raw`, `vendor_transactions_raw`). The brand labels **RP1M** / **OASIS PAY** are applied only at the display layer via `app/ui.py` (`SOURCE_LABELS`, `RESULT_STATUS_LABELS`, `relabel_source_column`, etc.).
+The schema retains `source_system IN ('internal', 'vendor')` for transactions and adds a `members` table plus `import_batches.source_type = 'members'`. The brand labels **RP1M** / **OASIS PAY** / **Members** are applied at the display layer via `app/ui.py` (`SOURCE_LABELS`, etc.).

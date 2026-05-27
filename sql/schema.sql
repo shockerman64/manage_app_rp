@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS import_batches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_type TEXT NOT NULL CHECK (source_type IN ('internal', 'vendor')),
+    source_type TEXT NOT NULL CHECK (source_type IN ('internal', 'vendor', 'members')),
     original_filename TEXT NOT NULL,
     file_hash TEXT NOT NULL,
     period_start TIMESTAMPTZ NULL,
@@ -127,3 +127,35 @@ CREATE TABLE IF NOT EXISTS reconciliation_results (
 
 CREATE INDEX IF NOT EXISTS idx_recon_run ON reconciliation_results(run_id);
 CREATE INDEX IF NOT EXISTS idx_recon_status ON reconciliation_results(result_status);
+
+CREATE TABLE IF NOT EXISTS members (
+    id BIGSERIAL PRIMARY KEY,
+    member_id TEXT NOT NULL UNIQUE,
+    login_id TEXT NULL,
+    created_date DATE NOT NULL,
+    group_name TEXT NULL,
+    merchant TEXT NULL,
+    member_group TEXT NULL,
+    currency TEXT NULL,
+    verify_status TEXT NULL,
+    status TEXT NULL,
+    last_update_at TIMESTAMPTZ NULL,
+    last_login_at TIMESTAMPTZ NULL,
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    batch_id UUID NULL REFERENCES import_batches(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_members_login_id ON members(login_id);
+CREATE INDEX IF NOT EXISTS idx_members_created_date ON members(created_date);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Expand source_type check on databases created before members imports.
+ALTER TABLE import_batches DROP CONSTRAINT IF EXISTS import_batches_source_type_check;
+ALTER TABLE import_batches ADD CONSTRAINT import_batches_source_type_check
+    CHECK (source_type IN ('internal', 'vendor', 'members'));
