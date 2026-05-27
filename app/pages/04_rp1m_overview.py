@@ -122,7 +122,7 @@ except Exception as exc:
     st.stop()
 
 total_activity = int(summary.get("total_deposits") or 0) + int(summary.get("total_withdraws") or 0)
-if total_activity == 0:
+if total_activity == 0 and member_count == 0:
     empty_state(
         "No approved transactions found for the selected range.",
         f"Try a wider date preset, or import {BRAND_INTERNAL} data from the Home page.",
@@ -176,6 +176,7 @@ else:
             "ftd_amount": "FTD Amount",
             "withdraw_count": "Withdraw Count",
             "withdraw_amount": "Withdraw Amount",
+            "new_registers": "New Registers",
         },
     )
     if not ftd_enabled:

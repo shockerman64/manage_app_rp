@@ -139,6 +139,7 @@ def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Se
 def fetch_daily_breakdown(start_date: date | None, end_date: date | None) -> pd.DataFrame:
     date_filter, params = _date_clauses(start_date, end_date)
     ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_datetime_local")
+    member_date_filter, _ = _date_clauses(start_date, end_date, column="m.created_date")
     cutoff = ftd_cutoff_date()
     params["cutoff_date"] = cutoff
     params["cutoff_ts"] = pd.Timestamp(cutoff)
@@ -173,18 +174,36 @@ def fetch_daily_breakdown(start_date: date | None, end_date: date | None) -> pd.
         FROM ftd_rows f
         WHERE {ftd_date_filter}
         GROUP BY f.txn_day
+    ),
+    member_created AS (
+        SELECT
+            m.created_date AS day,
+            COUNT(*) AS new_registers
+        FROM members m
+        WHERE {member_date_filter}
+        GROUP BY m.created_date
+    ),
+    days AS (
+        SELECT day FROM daily_totals
+        UNION
+        SELECT day FROM ftd_daily
+        UNION
+        SELECT day FROM member_created
     )
     SELECT
-        COALESCE(d.day, f.day) AS day,
+        days.day,
         COALESCE(d.deposit_count, 0) AS deposit_count,
         COALESCE(d.deposit_amount, 0) AS deposit_amount,
         COALESCE(f.ftd_count, 0) AS ftd_count,
         COALESCE(f.ftd_amount, 0) AS ftd_amount,
         COALESCE(d.withdraw_count, 0) AS withdraw_count,
-        COALESCE(d.withdraw_amount, 0) AS withdraw_amount
-    FROM daily_totals d
-    FULL OUTER JOIN ftd_daily f ON d.day = f.day
-    ORDER BY day
+        COALESCE(d.withdraw_amount, 0) AS withdraw_amount,
+        COALESCE(mc.new_registers, 0) AS new_registers
+    FROM days
+    LEFT JOIN daily_totals d ON d.day = days.day
+    LEFT JOIN ftd_daily f ON f.day = days.day
+    LEFT JOIN member_created mc ON mc.day = days.day
+    ORDER BY days.day
     """
     return query_frame(sql, params)
 
