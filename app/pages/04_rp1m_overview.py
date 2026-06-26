@@ -156,6 +156,9 @@ if ftd_enabled and unmatched > 0:
     )
 
 section_title("Daily Breakdown", "One row per calendar day in the selected range.")
+st.caption(
+    "Affiliated registers and FTDs are members with a non-empty **Referral ID** in the Members registry."
+)
 try:
     daily = fetch_daily_breakdown(start_date, end_date)
 except Exception as exc:
@@ -174,13 +177,18 @@ else:
             "deposit_amount": "Deposit Amount",
             "ftd_count": "FTD Count",
             "ftd_amount": "FTD Amount",
+            "affiliated_ftd_count": "Affiliated FTD Count",
             "withdraw_count": "Withdraw Count",
             "withdraw_amount": "Withdraw Amount",
             "new_registers": "New Registers",
+            "affiliated_registers": "Affiliated Registers",
         },
     )
     if not ftd_enabled:
-        display = display.drop(columns=["FTD Count", "FTD Amount"], errors="ignore")
+        display = display.drop(
+            columns=["FTD Count", "FTD Amount", "Affiliated FTD Count"],
+            errors="ignore",
+        )
 
     st.dataframe(
         display,

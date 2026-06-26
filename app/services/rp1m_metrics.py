@@ -19,6 +19,8 @@ _MEMBER_JOIN = """
     )
 """
 
+_AFFILIATED_MEMBER_FILTER = "COALESCE(TRIM(m.raw_data->>'Referral ID'), '') <> ''"
+
 _EFFECTIVE_FTD_CTE = f"""
 effective_ftd AS (
     SELECT
@@ -175,10 +177,22 @@ def fetch_daily_breakdown(start_date: date | None, end_date: date | None) -> pd.
         WHERE {ftd_date_filter}
         GROUP BY f.txn_day
     ),
+    affiliated_ftd_daily AS (
+        SELECT
+            f.txn_day AS day,
+            COUNT(*) AS affiliated_ftd_count
+        FROM ftd_rows f
+        INNER JOIN transactions_normalized t ON t.id = f.id
+        INNER JOIN members m ON {_MEMBER_JOIN}
+        WHERE {ftd_date_filter}
+          AND {_AFFILIATED_MEMBER_FILTER}
+        GROUP BY f.txn_day
+    ),
     member_created AS (
         SELECT
             m.created_date AS day,
-            COUNT(*) AS new_registers
+            COUNT(*) AS new_registers,
+            COUNT(*) FILTER (WHERE {_AFFILIATED_MEMBER_FILTER}) AS affiliated_registers
         FROM members m
         WHERE {member_date_filter}
         GROUP BY m.created_date
@@ -196,12 +210,15 @@ def fetch_daily_breakdown(start_date: date | None, end_date: date | None) -> pd.
         COALESCE(d.deposit_amount, 0) AS deposit_amount,
         COALESCE(f.ftd_count, 0) AS ftd_count,
         COALESCE(f.ftd_amount, 0) AS ftd_amount,
+        COALESCE(af.affiliated_ftd_count, 0) AS affiliated_ftd_count,
         COALESCE(d.withdraw_count, 0) AS withdraw_count,
         COALESCE(d.withdraw_amount, 0) AS withdraw_amount,
-        COALESCE(mc.new_registers, 0) AS new_registers
+        COALESCE(mc.new_registers, 0) AS new_registers,
+        COALESCE(mc.affiliated_registers, 0) AS affiliated_registers
     FROM days
     LEFT JOIN daily_totals d ON d.day = days.day
     LEFT JOIN ftd_daily f ON f.day = days.day
+    LEFT JOIN affiliated_ftd_daily af ON af.day = days.day
     LEFT JOIN member_created mc ON mc.day = days.day
     ORDER BY days.day
     """
