@@ -9,6 +9,7 @@ if str(_ROOT) not in sys.path:
 import streamlit as st
 
 from app.config import FTD_CUTOFF_MONTH
+from app.services.app_settings import get_facebook_affiliate_code, set_facebook_affiliate_code
 from app.services.rp1m_metrics import (
     fetch_daily_breakdown,
     fetch_overview_kpis,
@@ -155,10 +156,34 @@ if ftd_enabled and unmatched > 0:
         "but no matching Members registry row (excluded from FTD)."
     )
 
+section_title("Affiliate Tracking", "Configure Facebook affiliate filtering for daily breakdown columns.")
+facebook_affiliate_code = get_facebook_affiliate_code()
+affiliate_cols = st.columns([2.2, 1])
+with affiliate_cols[0]:
+    facebook_code_input = st.text_input(
+        "Facebook affiliate Referral ID code",
+        value=facebook_affiliate_code,
+        placeholder="e.g. FB001",
+        help="Members whose Referral ID matches this code (case-insensitive) appear in the Facebook columns.",
+        key="facebook_affiliate_code_input",
+    )
+with affiliate_cols[1]:
+    if st.button("Save affiliate code", type="primary", use_container_width=True):
+        set_facebook_affiliate_code(facebook_code_input)
+        st.success("Facebook affiliate code saved.")
+        st.rerun()
+
 section_title("Daily Breakdown", "One row per calendar day in the selected range.")
-st.caption(
-    "Affiliated registers and FTDs are members with a non-empty **Referral ID** in the Members registry."
-)
+if facebook_affiliate_code:
+    st.caption(
+        "Affiliated columns count any member with a **Referral ID**. "
+        f"Facebook columns count members whose Referral ID matches **{facebook_affiliate_code}**."
+    )
+else:
+    st.caption(
+        "Affiliated columns count any member with a **Referral ID**. "
+        "Set a Facebook affiliate code above to populate the Facebook columns."
+    )
 try:
     daily = fetch_daily_breakdown(start_date, end_date)
 except Exception as exc:
@@ -178,15 +203,17 @@ else:
             "ftd_count": "FTD Count",
             "ftd_amount": "FTD Amount",
             "affiliated_ftd_count": "Affiliated FTD Count",
+            "facebook_ftd_count": "Facebook FTD Count",
             "withdraw_count": "Withdraw Count",
             "withdraw_amount": "Withdraw Amount",
             "new_registers": "New Registers",
             "affiliated_registers": "Affiliated Registers",
+            "facebook_registers": "Facebook Registers",
         },
     )
     if not ftd_enabled:
         display = display.drop(
-            columns=["FTD Count", "FTD Amount", "Affiliated FTD Count"],
+            columns=["FTD Count", "FTD Amount", "Affiliated FTD Count", "Facebook FTD Count"],
             errors="ignore",
         )
 

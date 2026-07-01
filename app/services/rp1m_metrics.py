@@ -6,6 +6,7 @@ import pandas as pd
 
 from app.config import FTD_CUTOFF_MONTH, ftd_cutoff_date
 from app.services.analytics import query_frame
+from app.services.app_settings import get_facebook_affiliate_code
 
 _MEMBER_JOIN = """
     (
@@ -19,7 +20,11 @@ _MEMBER_JOIN = """
     )
 """
 
-_AFFILIATED_MEMBER_FILTER = "COALESCE(TRIM(m.raw_data->>'Referral ID'), '') <> ''"
+_MEMBER_REFERRAL_ID = "TRIM(COALESCE(m.raw_data->>'Referral ID', ''))"
+_AFFILIATED_MEMBER_FILTER = f"{_MEMBER_REFERRAL_ID} <> ''"
+_FACEBOOK_AFFILIATE_FILTER = (
+    f":facebook_affiliate_code <> '' AND UPPER({_MEMBER_REFERRAL_ID}) = UPPER(TRIM(:facebook_affiliate_code))"
+)
 
 _EFFECTIVE_FTD_CTE = f"""
 effective_ftd AS (
@@ -138,13 +143,21 @@ def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Se
     return frame.iloc[0]
 
 
-def fetch_daily_breakdown(start_date: date | None, end_date: date | None) -> pd.DataFrame:
+def fetch_daily_breakdown(
+    start_date: date | None,
+    end_date: date | None,
+    *,
+    facebook_affiliate_code: str | None = None,
+) -> pd.DataFrame:
     date_filter, params = _date_clauses(start_date, end_date)
     ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_datetime_local")
     member_date_filter, _ = _date_clauses(start_date, end_date, column="m.created_date")
     cutoff = ftd_cutoff_date()
     params["cutoff_date"] = cutoff
     params["cutoff_ts"] = pd.Timestamp(cutoff)
+    if facebook_affiliate_code is None:
+        facebook_affiliate_code = get_facebook_affiliate_code()
+    params["facebook_affiliate_code"] = facebook_affiliate_code.strip()
 
     sql = f"""
     WITH {_EFFECTIVE_FTD_CTE},
@@ -188,11 +201,23 @@ def fetch_daily_breakdown(start_date: date | None, end_date: date | None) -> pd.
           AND {_AFFILIATED_MEMBER_FILTER}
         GROUP BY f.txn_day
     ),
+    facebook_ftd_daily AS (
+        SELECT
+            f.txn_day AS day,
+            COUNT(*) AS facebook_ftd_count
+        FROM ftd_rows f
+        INNER JOIN transactions_normalized t ON t.id = f.id
+        INNER JOIN members m ON {_MEMBER_JOIN}
+        WHERE {ftd_date_filter}
+          AND {_FACEBOOK_AFFILIATE_FILTER}
+        GROUP BY f.txn_day
+    ),
     member_created AS (
         SELECT
             m.created_date AS day,
             COUNT(*) AS new_registers,
-            COUNT(*) FILTER (WHERE {_AFFILIATED_MEMBER_FILTER}) AS affiliated_registers
+            COUNT(*) FILTER (WHERE {_AFFILIATED_MEMBER_FILTER}) AS affiliated_registers,
+            COUNT(*) FILTER (WHERE {_FACEBOOK_AFFILIATE_FILTER}) AS facebook_registers
         FROM members m
         WHERE {member_date_filter}
         GROUP BY m.created_date
@@ -211,14 +236,17 @@ def fetch_daily_breakdown(start_date: date | None, end_date: date | None) -> pd.
         COALESCE(f.ftd_count, 0) AS ftd_count,
         COALESCE(f.ftd_amount, 0) AS ftd_amount,
         COALESCE(af.affiliated_ftd_count, 0) AS affiliated_ftd_count,
+        COALESCE(ff.facebook_ftd_count, 0) AS facebook_ftd_count,
         COALESCE(d.withdraw_count, 0) AS withdraw_count,
         COALESCE(d.withdraw_amount, 0) AS withdraw_amount,
         COALESCE(mc.new_registers, 0) AS new_registers,
-        COALESCE(mc.affiliated_registers, 0) AS affiliated_registers
+        COALESCE(mc.affiliated_registers, 0) AS affiliated_registers,
+        COALESCE(mc.facebook_registers, 0) AS facebook_registers
     FROM days
     LEFT JOIN daily_totals d ON d.day = days.day
     LEFT JOIN ftd_daily f ON f.day = days.day
     LEFT JOIN affiliated_ftd_daily af ON af.day = days.day
+    LEFT JOIN facebook_ftd_daily ff ON ff.day = days.day
     LEFT JOIN member_created mc ON mc.day = days.day
     ORDER BY days.day
     """
