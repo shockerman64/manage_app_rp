@@ -221,6 +221,26 @@ with insight_col:
 
 
 try:
+    by_type = query_frame(
+        f"""
+        SELECT
+            txn_type,
+            COUNT(*) AS txn_count,
+            SUM(amount) AS total_amount,
+            COALESCE(AVG(amount), 0) AS avg_amount
+        FROM transactions_normalized
+        WHERE {where_sql}
+        GROUP BY txn_type
+        ORDER BY
+            CASE
+                WHEN txn_type ILIKE 'Deposit' THEN 0
+                WHEN txn_type ILIKE 'Withdraw' THEN 1
+                ELSE 2
+            END,
+            total_amount DESC NULLS LAST
+        """,
+        params,
+    )
     by_method = query_frame(
         f"""
         SELECT pay_method, COUNT(*) AS txn_count, SUM(amount) AS total_amount
@@ -255,6 +275,7 @@ try:
 except Exception as exc:
     st.error("Failed to load breakdown tables.")
     st.caption(str(exc))
+    by_type = pd.DataFrame()
     by_method = pd.DataFrame()
     by_status = pd.DataFrame()
     by_merchant = pd.DataFrame()
@@ -280,7 +301,30 @@ def _render_breakdown(frame: pd.DataFrame, label_col: str, label_name: str) -> N
     )
 
 
+def _render_type_breakdown(frame: pd.DataFrame) -> None:
+    if frame.empty:
+        empty_state("No type data available.", "Try widening the date range.")
+        return
+    display = rename_columns(
+        frame,
+        {
+            "txn_type": "Type",
+            "txn_count": "Transactions",
+            "total_amount": "Total Amount",
+            "avg_amount": "Avg Amount",
+        },
+    )
+    st.dataframe(
+        display,
+        column_config=amount_column_config(["Total Amount", "Avg Amount"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 section_title("Breakdowns")
+st.subheader("By Type")
+_render_type_breakdown(by_type)
 breakdown_cols = st.columns(3)
 with breakdown_cols[0]:
     st.subheader("By Pay Method")
