@@ -28,7 +28,7 @@ _MEMBER_JOIN = """
 _MEMBER_REFERRAL_ID = "TRIM(COALESCE(m.raw_data->>'Referral ID', ''))"
 _AFFILIATED_MEMBER_FILTER = f"{_MEMBER_REFERRAL_ID} <> ''"
 _FACEBOOK_AFFILIATE_FILTER = (
-    f"CARDINALITY(:facebook_affiliate_codes::text[]) > 0 "
+    f":has_facebook_affiliate_codes "
     f"AND UPPER({_MEMBER_REFERRAL_ID}) = ANY(:facebook_affiliate_codes)"
 )
 
@@ -172,6 +172,7 @@ def fetch_daily_breakdown(
     params["cutoff_ts"] = pd.Timestamp(cutoff)
     if facebook_affiliate_codes is None:
         facebook_affiliate_codes = get_facebook_affiliate_codes()
+    params["has_facebook_affiliate_codes"] = bool(facebook_affiliate_codes)
     params["facebook_affiliate_codes"] = [code.upper() for code in facebook_affiliate_codes]
     params = _with_backoffice_params(params)
 
