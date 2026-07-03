@@ -9,8 +9,13 @@ if str(_ROOT) not in sys.path:
 import streamlit as st
 
 from app.config import FTD_CUTOFF_MONTH
-from app.services.app_settings import get_facebook_affiliate_code, set_facebook_affiliate_code
+from app.services.app_settings import (
+    get_facebook_affiliate_code,
+    get_facebook_affiliate_codes,
+    set_facebook_affiliate_code,
+)
 from app.services.rp1m_metrics import (
+    backoffice_merchant_label,
     fetch_daily_breakdown,
     fetch_overview_kpis,
     ftd_cutoff_label,
@@ -18,6 +23,7 @@ from app.services.rp1m_metrics import (
 )
 from app.ui import (
     BRAND_INTERNAL,
+    BRAND_VENDOR,
     amount_column_config,
     empty_state,
     format_count,
@@ -31,7 +37,9 @@ from app.ui import (
 setup_page("RP1M Overview", ":money_with_wings:")
 page_header(
     f"{BRAND_INTERNAL} Deposits & Withdrawals",
-    "Approved deposit and withdrawal totals with member-aware first-time deposit (FTD) metrics.",
+    f"Back office merchant **{backoffice_merchant_label()}** only — approved deposit and withdrawal "
+    "totals with member-aware first-time deposit (FTD) metrics. "
+    f"{BRAND_VENDOR} gateway data is excluded (use Reconciliation to verify QRIS rows).",
 )
 
 PRESETS = [
@@ -48,6 +56,7 @@ if "overview_preset" not in st.session_state:
 
 member_count = get_member_registry_count()
 st.caption(
+    f"Merchant: **{backoffice_merchant_label()}** (back office CSV). "
     f"FTD cutoff month: **{ftd_cutoff_label()}** (from `FTD_CUTOFF_MONTH`). "
     f"Members registry: **{member_count:,}** row(s). "
     "Only **Approved** transactions are included."
@@ -136,7 +145,10 @@ ftd_amount = float(summary.get("ftd_amount") or 0) if ftd_enabled else None
 ftd_count = int(summary.get("ftd_count") or 0) if ftd_enabled else None
 unmatched = int(summary.get("unmatched_member_keys") or 0)
 
-section_title("Overview", "Totals for the selected date range (Approved only).")
+section_title(
+    "Overview",
+    f"Totals for **{backoffice_merchant_label()}** in the selected date range (Approved only).",
+)
 row1 = st.columns(3)
 row2 = st.columns(3)
 row1[0].metric("Total Deposit Amount", format_money(summary.get("total_deposit_amount")))
@@ -157,32 +169,34 @@ if ftd_enabled and unmatched > 0:
     )
 
 section_title("Affiliate Tracking", "Configure Facebook affiliate filtering for daily breakdown columns.")
-facebook_affiliate_code = get_facebook_affiliate_code()
+facebook_affiliate_codes = get_facebook_affiliate_codes()
 affiliate_cols = st.columns([2.2, 1])
 with affiliate_cols[0]:
-    facebook_code_input = st.text_input(
-        "Facebook affiliate Referral ID code",
-        value=facebook_affiliate_code,
-        placeholder="e.g. FB001",
-        help="Members whose Referral ID matches this code (case-insensitive) appear in the Facebook columns.",
+    facebook_code_input = st.text_area(
+        "Facebook affiliate Referral ID codes",
+        value=get_facebook_affiliate_code(),
+        placeholder="FB001, FB002\nor one code per line",
+        help="Members whose Referral ID matches any of these codes (case-insensitive) appear in the Facebook columns.",
         key="facebook_affiliate_code_input",
+        height=88,
     )
 with affiliate_cols[1]:
-    if st.button("Save affiliate code", type="primary", use_container_width=True):
+    if st.button("Save affiliate codes", type="primary", use_container_width=True):
         set_facebook_affiliate_code(facebook_code_input)
-        st.success("Facebook affiliate code saved.")
+        st.success("Facebook affiliate codes saved.")
         st.rerun()
 
 section_title("Daily Breakdown", "One row per calendar day in the selected range.")
-if facebook_affiliate_code:
+if facebook_affiliate_codes:
+    codes_label = ", ".join(f"**{code}**" for code in facebook_affiliate_codes)
     st.caption(
         "Affiliated columns count any member with a **Referral ID**. "
-        f"Facebook columns count members whose Referral ID matches **{facebook_affiliate_code}**."
+        f"Facebook columns count members whose Referral ID matches one of: {codes_label}."
     )
 else:
     st.caption(
         "Affiliated columns count any member with a **Referral ID**. "
-        "Set a Facebook affiliate code above to populate the Facebook columns."
+        "Set one or more Facebook affiliate codes above to populate the Facebook columns."
     )
 try:
     daily = fetch_daily_breakdown(start_date, end_date)

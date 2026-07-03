@@ -4,9 +4,14 @@ from datetime import date
 
 import pandas as pd
 
-from app.config import FTD_CUTOFF_MONTH, ftd_cutoff_date
+from app.config import BACKOFFICE_MERCHANT, FTD_CUTOFF_MONTH, ftd_cutoff_date
 from app.services.analytics import query_frame
-from app.services.app_settings import get_facebook_affiliate_code
+from app.services.app_settings import get_facebook_affiliate_codes
+
+_BACKOFFICE_TXN_FILTER = """
+    t.source_system = 'internal'
+    AND TRIM(t.merchant) = TRIM(:backoffice_merchant)
+"""
 
 _MEMBER_JOIN = """
     (
@@ -23,7 +28,8 @@ _MEMBER_JOIN = """
 _MEMBER_REFERRAL_ID = "TRIM(COALESCE(m.raw_data->>'Referral ID', ''))"
 _AFFILIATED_MEMBER_FILTER = f"{_MEMBER_REFERRAL_ID} <> ''"
 _FACEBOOK_AFFILIATE_FILTER = (
-    f":facebook_affiliate_code <> '' AND UPPER({_MEMBER_REFERRAL_ID}) = UPPER(TRIM(:facebook_affiliate_code))"
+    f"CARDINALITY(:facebook_affiliate_codes::text[]) > 0 "
+    f"AND UPPER({_MEMBER_REFERRAL_ID}) = ANY(:facebook_affiliate_codes)"
 )
 
 _EFFECTIVE_FTD_CTE = f"""
@@ -44,7 +50,7 @@ effective_ftd AS (
             END AS deposit_window_start
         FROM transactions_normalized t
         INNER JOIN members m ON {_MEMBER_JOIN}
-        WHERE t.source_system = 'internal'
+        WHERE {_BACKOFFICE_TXN_FILTER}
           AND t.txn_type ILIKE 'Deposit'
           AND t.status ILIKE 'Approved'
     ) t
@@ -69,6 +75,14 @@ ftd_rows AS (
     WHERE rn = 1
 )
 """
+
+
+def _with_backoffice_params(params: dict) -> dict:
+    return {**params, "backoffice_merchant": BACKOFFICE_MERCHANT}
+
+
+def backoffice_merchant_label() -> str:
+    return BACKOFFICE_MERCHANT
 
 
 def _date_clauses(
@@ -103,13 +117,14 @@ def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Se
     cutoff = ftd_cutoff_date()
     params["cutoff_date"] = cutoff
     params["cutoff_ts"] = pd.Timestamp(cutoff)
+    params = _with_backoffice_params(params)
 
     sql = f"""
     WITH {_EFFECTIVE_FTD_CTE},
     filtered AS (
         SELECT *
         FROM transactions_normalized t
-        WHERE t.source_system = 'internal'
+        WHERE {_BACKOFFICE_TXN_FILTER}
           AND t.status ILIKE 'Approved'
           AND {date_filter}
     ),
@@ -129,7 +144,7 @@ def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Se
             SELECT COUNT(DISTINCT COALESCE(t.member_id, t.login_id))
             FROM transactions_normalized t
             LEFT JOIN members m ON {_MEMBER_JOIN}
-            WHERE t.source_system = 'internal'
+            WHERE {_BACKOFFICE_TXN_FILTER}
               AND t.txn_type ILIKE 'Deposit'
               AND t.status ILIKE 'Approved'
               AND {date_filter}
@@ -147,7 +162,7 @@ def fetch_daily_breakdown(
     start_date: date | None,
     end_date: date | None,
     *,
-    facebook_affiliate_code: str | None = None,
+    facebook_affiliate_codes: list[str] | None = None,
 ) -> pd.DataFrame:
     date_filter, params = _date_clauses(start_date, end_date)
     ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_datetime_local")
@@ -155,9 +170,10 @@ def fetch_daily_breakdown(
     cutoff = ftd_cutoff_date()
     params["cutoff_date"] = cutoff
     params["cutoff_ts"] = pd.Timestamp(cutoff)
-    if facebook_affiliate_code is None:
-        facebook_affiliate_code = get_facebook_affiliate_code()
-    params["facebook_affiliate_code"] = facebook_affiliate_code.strip()
+    if facebook_affiliate_codes is None:
+        facebook_affiliate_codes = get_facebook_affiliate_codes()
+    params["facebook_affiliate_codes"] = [code.upper() for code in facebook_affiliate_codes]
+    params = _with_backoffice_params(params)
 
     sql = f"""
     WITH {_EFFECTIVE_FTD_CTE},
@@ -167,7 +183,7 @@ def fetch_daily_breakdown(
             txn_type,
             amount
         FROM transactions_normalized t
-        WHERE t.source_system = 'internal'
+        WHERE {_BACKOFFICE_TXN_FILTER}
           AND t.status ILIKE 'Approved'
           AND {date_filter}
     ),

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import text
 
 from app.db import engine
 
 FACEBOOK_AFFILIATE_CODE_KEY = "facebook_affiliate_code"
+_CODE_SPLIT = re.compile(r"[,;\n]+")
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -34,9 +37,33 @@ def set_setting(key: str, value: str) -> None:
         )
 
 
+def parse_facebook_affiliate_codes(raw: str) -> list[str]:
+    codes: list[str] = []
+    seen: set[str] = set()
+    for part in _CODE_SPLIT.split(raw):
+        code = part.strip()
+        if not code:
+            continue
+        key = code.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        codes.append(code)
+    return codes
+
+
+def format_facebook_affiliate_codes(codes: list[str]) -> str:
+    return ", ".join(codes)
+
+
+def get_facebook_affiliate_codes() -> list[str]:
+    return parse_facebook_affiliate_codes(get_setting(FACEBOOK_AFFILIATE_CODE_KEY))
+
+
 def get_facebook_affiliate_code() -> str:
-    return get_setting(FACEBOOK_AFFILIATE_CODE_KEY).strip()
+    return format_facebook_affiliate_codes(get_facebook_affiliate_codes())
 
 
-def set_facebook_affiliate_code(code: str) -> None:
-    set_setting(FACEBOOK_AFFILIATE_CODE_KEY, code.strip())
+def set_facebook_affiliate_code(raw: str) -> None:
+    codes = parse_facebook_affiliate_codes(raw)
+    set_setting(FACEBOOK_AFFILIATE_CODE_KEY, format_facebook_affiliate_codes(codes))

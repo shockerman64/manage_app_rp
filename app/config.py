@@ -29,6 +29,7 @@ DATABASE_URL = require_env("DATABASE_URL")
 RECON_TIME_TOLERANCE_MINUTES = int(os.getenv("RECON_TIME_TOLERANCE_MINUTES", "10"))
 RECON_INTERNAL_AMOUNT_MULTIPLIER = float(os.getenv("RECON_INTERNAL_AMOUNT_MULTIPLIER", "1000"))
 FTD_CUTOFF_MONTH = _parse_ftd_cutoff_month(os.getenv("FTD_CUTOFF_MONTH", "2026-04"))
+BACKOFFICE_MERCHANT = os.getenv("BACKOFFICE_MERCHANT", "RP1M (161)").strip()
 
 
 def ftd_cutoff_date() -> date:
