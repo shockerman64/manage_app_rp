@@ -280,12 +280,15 @@ section[data-testid="stSidebar"] {
     background: #0B1220 !important;
     border-right: 1px solid rgba(148, 163, 184, 0.12);
 }
-section[data-testid="stSidebar"] > div {
-    padding-top: 0.85rem;
-}
 
 /* Hide the default auto-generated page list; we render a custom nav. */
 [data-testid="stSidebarNav"] {
+    display: none !important;
+}
+
+/* Keep injected <style> blocks from adding a blank gap. */
+.main .stElementContainer:has(style),
+section[data-testid="stSidebar"] .stElementContainer:has(style) {
     display: none !important;
 }
 
@@ -316,24 +319,28 @@ section[data-testid="stSidebar"] > div {
     text-transform: uppercase;
     margin: 0.85rem 0.35rem 0.35rem 0.35rem;
 }
+[data-testid="stSidebar"] [data-testid="stPageLink"] {
+    width: 100%;
+}
 [data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {
     border-radius: 8px;
-    padding: 0.42rem 0.7rem;
+    padding: 0.42rem 0.7rem !important;
     margin: 1px 0;
     color: #CBD5E1 !important;
     font-size: 0.9rem;
     font-weight: 500;
     border: 1px solid transparent;
+    text-decoration: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] span {
+    color: inherit !important;
 }
 [data-testid="stSidebar"] [data-testid="stPageLink-NavLink"]:hover {
-    background: rgba(99, 102, 241, 0.12);
+    background: rgba(99, 102, 241, 0.12) !important;
     color: #F8FAFC !important;
 }
-[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"][aria-current="page"] {
-    background: rgba(79, 70, 229, 0.22);
-    border-color: rgba(129, 140, 248, 0.35);
+[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"]:hover span {
     color: #F8FAFC !important;
-    font-weight: 600;
 }
 
 /* Player Winnings KPI cards (signed colors) */
@@ -397,15 +404,13 @@ section[data-testid="stSidebar"] > div {
 """
 
 
-_CSS_VERSION = 2
-
-
 def inject_global_css() -> None:
-    """Inject the shared look-and-feel CSS. Safe to call once per page."""
-    if st.session_state.get("_rp_css_injected") == _CSS_VERSION:
-        return
+    """Inject shared CSS on every script run.
+
+    Streamlit rebuilds the element tree on each page change and widget rerun,
+    so this must not be skipped via session_state.
+    """
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
-    st.session_state["_rp_css_injected"] = _CSS_VERSION
 
 
 def accent_bar() -> None:
@@ -472,7 +477,6 @@ def render_db_status_pill() -> None:
 
 def page_header(title: str, caption: str | None = None) -> None:
     """Standard page header: accent bar + title + optional caption."""
-    inject_global_css()
     accent_bar()
     st.title(title)
     if caption:
