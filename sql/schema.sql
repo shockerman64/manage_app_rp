@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS import_batches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_type TEXT NOT NULL CHECK (source_type IN ('internal', 'vendor', 'members')),
+    source_type TEXT NOT NULL CHECK (source_type IN ('internal', 'vendor', 'members', 'member_pnl')),
     original_filename TEXT NOT NULL,
     file_hash TEXT NOT NULL,
     period_start TIMESTAMPTZ NULL,
@@ -149,13 +149,48 @@ CREATE TABLE IF NOT EXISTS members (
 CREATE INDEX IF NOT EXISTS idx_members_login_id ON members(login_id);
 CREATE INDEX IF NOT EXISTS idx_members_created_date ON members(created_date);
 
+CREATE TABLE IF NOT EXISTS member_pnl_daily (
+    id BIGSERIAL PRIMARY KEY,
+    report_date DATE NOT NULL,
+    member_id TEXT NOT NULL,
+    login_id TEXT NULL,
+    group_name TEXT NULL,
+    merchant TEXT NULL,
+    member_group TEXT NULL,
+    currency TEXT NULL,
+    transfer_in_count INTEGER NULL,
+    transfer_in_amt NUMERIC(18, 4) NULL,
+    transfer_out_count INTEGER NULL,
+    transfer_out_amt NUMERIC(18, 4) NULL,
+    adjustment_count INTEGER NULL,
+    adjustment_amt NUMERIC(18, 4) NULL,
+    stakes_count INTEGER NULL,
+    stake_amt NUMERIC(18, 4) NULL,
+    valid_stake_amt NUMERIC(18, 4) NULL,
+    gain_loss NUMERIC(18, 4) NULL,
+    comm NUMERIC(18, 4) NULL,
+    bonus_amt NUMERIC(18, 4) NULL,
+    stakes_adj_count INTEGER NULL,
+    stakes_adj_amt NUMERIC(18, 4) NULL,
+    total_gl NUMERIC(18, 4) NULL,
+    prize NUMERIC(18, 4) NULL,
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    batch_id UUID NULL REFERENCES import_batches(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (report_date, member_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_member_pnl_daily_report_date ON member_pnl_daily(report_date);
+CREATE INDEX IF NOT EXISTS idx_member_pnl_daily_login_id ON member_pnl_daily(login_id);
+CREATE INDEX IF NOT EXISTS idx_member_pnl_daily_total_gl ON member_pnl_daily(total_gl);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Expand source_type check on databases created before members imports.
+-- Expand source_type check on databases created before members / member P&L imports.
 ALTER TABLE import_batches DROP CONSTRAINT IF EXISTS import_batches_source_type_check;
 ALTER TABLE import_batches ADD CONSTRAINT import_batches_source_type_check
-    CHECK (source_type IN ('internal', 'vendor', 'members'));
+    CHECK (source_type IN ('internal', 'vendor', 'members', 'member_pnl'));

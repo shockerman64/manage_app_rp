@@ -13,6 +13,7 @@ SOURCE_LABELS: dict[str, str] = {
     "internal": BRAND_INTERNAL,
     "vendor": BRAND_VENDOR,
     "members": "Members",
+    "member_pnl": "Member P&L",
 }
 
 LABEL_TO_SOURCE: dict[str, str] = {label: source for source, label in SOURCE_LABELS.items()}
@@ -136,6 +137,54 @@ def amount_column_config(columns: Iterable[str]) -> dict[str, st.column_config.N
     return config
 
 
+SIGNED_VALUE_COLOR_POS = "#F8FAFC"
+SIGNED_VALUE_COLOR_NEG = "#F87171"
+
+
+def signed_color_style(value: object) -> str:
+    try:
+        if value is None or pd.isna(value):
+            return ""
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if number < 0:
+        return f"color: {SIGNED_VALUE_COLOR_NEG}; font-weight: 600;"
+    return f"color: {SIGNED_VALUE_COLOR_POS};"
+
+
+def style_signed_amounts(frame: pd.DataFrame, columns: Iterable[str]):
+    """Color negative amounts red and positive amounts white (Player Winnings tables)."""
+    cols = [column for column in columns if column in frame.columns]
+    styler = frame.style
+    if cols:
+        styler = styler.format("{:,.2f}", subset=cols, na_rep="-")
+        styler = styler.map(signed_color_style, subset=cols)
+    return styler
+
+
+def kpi_card(label: str, display: str, *, tone: str = "neutral") -> None:
+    """Metric-style card. tone: 'positive' (white), 'negative' (red), 'neutral'."""
+    st.markdown(
+        f'<div class="rp-kpi-card rp-kpi-{tone}">'
+        f'<div class="rp-kpi-label">{label}</div>'
+        f'<div class="rp-kpi-value">{display}</div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def signed_kpi_card(label: str, value: object, *, as_money: bool = True) -> None:
+    """KPI card colored by numeric sign: red if negative, white otherwise."""
+    display = format_money(value) if as_money else format_count(value)
+    try:
+        number = float(value) if value is not None and not pd.isna(value) else 0.0
+    except (TypeError, ValueError):
+        number = 0.0
+    tone = "negative" if number < 0 else "positive"
+    kpi_card(label, display, tone=tone)
+
+
 def datetime_column_config(
     columns: Iterable[str],
     fmt: str = "DD MMM YYYY, HH:mm",
@@ -226,18 +275,96 @@ _GLOBAL_CSS = """
     border-radius: 8px 8px 0 0;
 }
 
+/* Sidebar shell */
+section[data-testid="stSidebar"] {
+    background: #0B1220 !important;
+    border-right: 1px solid rgba(148, 163, 184, 0.12);
+}
+section[data-testid="stSidebar"] > div {
+    padding-top: 0.85rem;
+}
+
+/* Hide the default auto-generated page list; we render a custom nav. */
+[data-testid="stSidebarNav"] {
+    display: none !important;
+}
+
 /* Sidebar branding */
 .rp-sidebar-brand {
-    font-size: 1.15rem;
+    font-size: 1.05rem;
     font-weight: 700;
-    letter-spacing: 0.02em;
-    margin-bottom: 0.1rem;
+    letter-spacing: 0.04em;
+    margin: 0 0 0.15rem 0.15rem;
 }
 .rp-sidebar-brand-sub {
     color: #94A3B8;
-    font-size: 0.78rem;
-    margin-bottom: 0.85rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: 0 0 0.75rem 0.15rem;
 }
+.rp-sidebar-rule {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.16);
+    margin: 0.35rem 0.15rem 0.85rem 0.15rem;
+}
+.rp-nav-section {
+    color: #64748B;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0.85rem 0.35rem 0.35rem 0.35rem;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {
+    border-radius: 8px;
+    padding: 0.42rem 0.7rem;
+    margin: 1px 0;
+    color: #CBD5E1 !important;
+    font-size: 0.9rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"]:hover {
+    background: rgba(99, 102, 241, 0.12);
+    color: #F8FAFC !important;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"][aria-current="page"] {
+    background: rgba(79, 70, 229, 0.22);
+    border-color: rgba(129, 140, 248, 0.35);
+    color: #F8FAFC !important;
+    font-weight: 600;
+}
+
+/* Player Winnings KPI cards (signed colors) */
+.rp-kpi-card {
+    background-color: rgba(30, 41, 59, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    min-height: 4.6rem;
+    transition: border-color 120ms ease-in-out, transform 120ms ease-in-out;
+}
+.rp-kpi-card:hover {
+    border-color: rgba(99, 102, 241, 0.55);
+    transform: translateY(-1px);
+}
+.rp-kpi-label {
+    color: #94A3B8;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.25rem;
+}
+.rp-kpi-value {
+    font-size: 1.4rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #F8FAFC;
+}
+.rp-kpi-positive .rp-kpi-value { color: #F8FAFC; }
+.rp-kpi-negative .rp-kpi-value { color: #F87171; }
+.rp-kpi-neutral .rp-kpi-value { color: #E2E8F0; }
 
 /* Status pill */
 .rp-pill {
@@ -270,12 +397,15 @@ _GLOBAL_CSS = """
 """
 
 
+_CSS_VERSION = 2
+
+
 def inject_global_css() -> None:
     """Inject the shared look-and-feel CSS. Safe to call once per page."""
-    if st.session_state.get("_rp_css_injected"):
+    if st.session_state.get("_rp_css_injected") == _CSS_VERSION:
         return
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
-    st.session_state["_rp_css_injected"] = True
+    st.session_state["_rp_css_injected"] = _CSS_VERSION
 
 
 def accent_bar() -> None:
@@ -285,9 +415,39 @@ def accent_bar() -> None:
 def render_sidebar_brand() -> None:
     st.sidebar.markdown(
         '<div class="rp-sidebar-brand">RP Dashboard</div>'
-        f'<div class="rp-sidebar-brand-sub">{BRAND_INTERNAL} &middot; {BRAND_VENDOR}</div>',
+        f'<div class="rp-sidebar-brand-sub">{BRAND_INTERNAL} &middot; {BRAND_VENDOR}</div>'
+        '<div class="rp-sidebar-rule"></div>',
         unsafe_allow_html=True,
     )
+
+
+_NAV_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
+    (
+        "Overview",
+        [
+            ("main.py", "Home", ":material/home:"),
+            ("pages/04_rp1m_overview.py", "RP1M Overview", ":material/account_balance_wallet:"),
+            ("pages/05_player_winnings.py", "Player Winnings", ":material/trophy:"),
+        ],
+    ),
+    (
+        "Analytics",
+        [
+            ("pages/01_metrics.py", "Metrics", ":material/monitoring:"),
+            ("pages/02_view_transactions.py", "View Transactions", ":material/receipt_long:"),
+            ("pages/03_reconciliation.py", "Reconciliation", ":material/compare_arrows:"),
+        ],
+    ),
+]
+
+
+def render_sidebar_nav() -> None:
+    """Grouped page links that replace Streamlit's default sidebar list."""
+    for section, items in _NAV_SECTIONS:
+        st.sidebar.markdown(f'<div class="rp-nav-section">{section}</div>', unsafe_allow_html=True)
+        for path, label, icon in items:
+            st.sidebar.page_link(path, label=label, icon=icon)
+    st.sidebar.markdown('<div class="rp-sidebar-rule"></div>', unsafe_allow_html=True)
 
 
 def render_db_status_pill() -> None:
@@ -331,5 +491,6 @@ def setup_page(
     inject_global_css()
     if sidebar_brand:
         render_sidebar_brand()
+        render_sidebar_nav()
     if db_status:
         render_db_status_pill()

@@ -11,6 +11,10 @@ from app.db import init_db
 from app.services.analytics import get_import_history, query_frame
 from app.services.ingestion import import_internal_csv, import_vendor_file
 from app.services.member_ingestion import import_members_csv
+from app.services.member_pnl_ingestion import (
+    import_member_pnl_csv,
+    parse_report_dates_from_filename,
+)
 from app.ui import (
     BRAND_INTERNAL,
     BRAND_VENDOR,
@@ -49,16 +53,6 @@ with st.sidebar:
             except Exception as exc:
                 st.error("Database initialization failed.")
                 st.caption(str(exc))
-
-    st.markdown("---")
-    st.caption("Navigation")
-    st.markdown(
-        "- **Home**: import data\n"
-        "- **RP1M Overview**: deposits, withdrawals, FTD\n"
-        "- **Metrics**: KPIs & trends\n"
-        "- **View Transactions**: browse all rows\n"
-        "- **Reconciliation**: match RP1M vs OASIS PAY"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +112,15 @@ else:
 
 section_title(
     "Upload Data",
-    f"Import {BRAND_INTERNAL} transactions, member registry (for FTD), or {BRAND_VENDOR} gateway files.",
+    f"Import {BRAND_INTERNAL} transactions, member registry (for FTD), "
+    f"daily member P&L, or {BRAND_VENDOR} gateway files.",
 )
 
-tab_internal, tab_members, tab_vendor = st.tabs(
+tab_internal, tab_members, tab_pnl, tab_vendor = st.tabs(
     [
         f":inbox_tray:  Upload {BRAND_INTERNAL} Transactions",
         ":busts_in_silhouette:  Upload Members",
+        ":trophy:  Upload Member P&L",
         f":inbox_tray:  Upload {BRAND_VENDOR} Transactions",
     ]
 )
@@ -180,6 +176,85 @@ with tab_members:
             except Exception as exc:
                 st.error("Members import failed.")
                 st.caption(str(exc))
+
+with tab_pnl:
+    st.caption(
+        "Import a daily Member P&L CSV (`4.3_P_&_L_By_Member_YYYYMMDD_YYYYMMDD_ALL.csv`). "
+        "The report date is read from the filename. Re-importing the same day updates existing "
+        "member rows. Open **Player Winnings** after import to analyze results."
+    )
+    pnl_file = st.file_uploader(
+        "Upload Member P&L CSV",
+        type=["csv"],
+        key="member_pnl_uploader",
+    )
+    parsed_pnl_dates = (
+        parse_report_dates_from_filename(pnl_file.name) if pnl_file is not None else None
+    )
+    if parsed_pnl_dates:
+        parsed_start, parsed_end = parsed_pnl_dates
+        if parsed_start == parsed_end:
+            st.caption(f"Parsed report date: **{parsed_start.strftime('%d %b %Y')}**")
+        else:
+            st.warning(
+                f"Filename dates differ ({parsed_start.strftime('%d %b %Y')} → "
+                f"{parsed_end.strftime('%d %b %Y')}). This snapshot will be stored under the "
+                f"**start** date unless you override it below."
+            )
+    elif pnl_file is not None:
+        st.warning(
+            "Could not parse YYYYMMDD_YYYYMMDD from the filename. "
+            "Set a report date below before importing."
+        )
+
+    override_pnl_date = st.checkbox(
+        "Override report date",
+        value=pnl_file is not None and parsed_pnl_dates is None,
+        key="member_pnl_override_date",
+    )
+    pnl_report_date = None
+    if override_pnl_date:
+        date_kwargs = {}
+        if parsed_pnl_dates:
+            date_kwargs["value"] = parsed_pnl_dates[0]
+        pnl_report_date = st.date_input(
+            "Report date",
+            format="DD/MM/YYYY",
+            key="member_pnl_report_date",
+            **date_kwargs,
+        )
+
+    if pnl_file is not None:
+        if st.button("Import Member P&L File", type="primary", use_container_width=True):
+            if parsed_pnl_dates is None and pnl_report_date is None:
+                st.error("Set a report date before importing this file.")
+            else:
+                try:
+                    with st.status("Importing member P&L CSV in batches...", expanded=False) as status:
+                        result = import_member_pnl_csv(
+                            pnl_file.name,
+                            pnl_file.getvalue(),
+                            report_date=pnl_report_date,
+                        )
+                        status.update(label="Import finished.", state="complete")
+                    if result.duplicate_file:
+                        st.warning("This Member P&L file was already imported (same hash).")
+                    else:
+                        msg = (
+                            f"Upserted member P&L rows: {result.upserted_rows:,} "
+                            f"for {result.report_date.strftime('%d %b %Y')}"
+                        )
+                        if result.skipped_rows:
+                            msg += f" (skipped {result.skipped_rows:,} rows missing Member ID)"
+                        st.success(msg)
+                        if result.date_range_warning and result.parsed_start and result.parsed_end:
+                            st.warning(
+                                "Filename start and end dates differ; snapshot stored under "
+                                f"{result.report_date.strftime('%d %b %Y')}."
+                            )
+                except Exception as exc:
+                    st.error("Member P&L import failed.")
+                    st.caption(str(exc))
 
 with tab_vendor:
     st.caption(
