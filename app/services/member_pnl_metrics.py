@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -52,6 +52,25 @@ def get_pnl_row_count() -> int:
     if frame.empty:
         return 0
     return int(frame.iloc[0]["cnt"] or 0)
+
+
+def fetch_available_report_dates() -> list[date]:
+    frame = query_frame(
+        "SELECT DISTINCT report_date AS day FROM member_pnl_daily ORDER BY day DESC"
+    )
+    if frame.empty:
+        return []
+    days: list[date] = []
+    for value in frame["day"]:
+        if isinstance(value, datetime):
+            days.append(value.date())
+        elif isinstance(value, date):
+            days.append(value)
+        else:
+            parsed = pd.to_datetime(value, errors="coerce")
+            if pd.notna(parsed):
+                days.append(parsed.date())
+    return days
 
 
 def fetch_winnings_kpis(

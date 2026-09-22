@@ -11,6 +11,7 @@ import plotly.express as px
 import streamlit as st
 
 from app.services.member_pnl_metrics import (
+    fetch_available_report_dates,
     fetch_daily_trend,
     fetch_member_rows,
     fetch_top_losers,
@@ -143,29 +144,30 @@ except Exception as exc:
     st.caption(str(exc))
     st.stop()
 
-if int(summary.get("row_count") or 0) == 0:
-    empty_state(
-        "No member P&L rows found for the selected filters.",
-        "Try a wider date preset, clear the search, or import another daily file.",
-        icon=":trophy:",
-    )
-    st.stop()
+overview_empty = int(summary.get("row_count") or 0) == 0
 
 section_title("Overview", "Totals use **Stakes-Total G/L** (player perspective). Negative values are red.")
-row1 = st.columns(3)
-row2 = st.columns(3)
-with row1[0]:
-    kpi_card("Total Player Winnings", format_money(summary.get("total_winnings")), tone="positive")
-with row1[1]:
-    kpi_card("Winners", format_count(summary.get("winners_count")), tone="neutral")
-with row1[2]:
-    signed_kpi_card("Net Player G/L", summary.get("net_player_gl"))
-with row2[0]:
-    kpi_card("Total Player Losses", format_money(summary.get("total_losses")), tone="negative")
-with row2[1]:
-    kpi_card("Losers", format_count(summary.get("losers_count")), tone="neutral")
-with row2[2]:
-    kpi_card("Active Players", format_count(summary.get("active_players")), tone="neutral")
+if overview_empty:
+    empty_state(
+        "No member P&L rows found for the selected overview range.",
+        "Try a wider date preset or clear the search. Member tables below still use their own day.",
+        icon=":trophy:",
+    )
+else:
+    row1 = st.columns(3)
+    row2 = st.columns(3)
+    with row1[0]:
+        kpi_card("Total Player Winnings", format_money(summary.get("total_winnings")), tone="positive")
+    with row1[1]:
+        kpi_card("Winners", format_count(summary.get("winners_count")), tone="neutral")
+    with row1[2]:
+        signed_kpi_card("Net Player G/L", summary.get("net_player_gl"))
+    with row2[0]:
+        kpi_card("Total Player Losses", format_money(summary.get("total_losses")), tone="negative")
+    with row2[1]:
+        kpi_card("Losers", format_count(summary.get("losers_count")), tone="neutral")
+    with row2[2]:
+        kpi_card("Active Players", format_count(summary.get("active_players")), tone="neutral")
 
 COLUMN_LABELS = {
     "report_date": "Date",
@@ -255,17 +257,53 @@ else:
     )
     st.plotly_chart(fig, use_container_width=True)
 
+section_title("Daily member tables", "These tables use a single report date. Overview and the trend chart still use the range filter above.")
+try:
+    available_days = fetch_available_report_dates()
+except Exception as exc:
+    st.error("Failed to load available table dates.")
+    st.caption(str(exc))
+    st.stop()
+if not available_days:
+    empty_state(
+        "No daily snapshots available for the member tables.",
+        "Import a Member P&L CSV from Home.",
+        icon=":trophy:",
+    )
+    st.stop()
+
+in_range_days = [
+    day
+    for day in available_days
+    if (start_date is None or day >= start_date) and (end_date is None or day <= end_date)
+]
+preferred_day = in_range_days[0] if in_range_days else available_days[0]
+if (
+    "winnings_table_day" not in st.session_state
+    or st.session_state["winnings_table_day"] not in available_days
+):
+    st.session_state["winnings_table_day"] = preferred_day
+
+table_day = st.selectbox(
+    "Table date",
+    options=available_days,
+    format_func=lambda day: day.strftime("%d %b %Y"),
+    key="winnings_table_day",
+    help="Top Winners, Top Losers, and All Members show this one day's snapshot only.",
+)
+day_label = table_day.strftime("%d %b %Y")
+
 top_cols = st.columns(2)
 with top_cols[0]:
-    section_title("Top Winners", "Highest positive Total G/L in the selected range.")
+    section_title("Top Winners", f"Highest positive Total G/L on **{day_label}**.")
     try:
-        winners = fetch_top_winners(start_date, end_date, search=search)
+        winners = fetch_top_winners(table_day, table_day, search=search)
     except Exception as exc:
         st.error("Failed to load top winners.")
         st.caption(str(exc))
         winners = pd.DataFrame()
     if winners is None or winners.empty:
-        empty_state("No winners in this range.", "Players with Total G/L above zero will appear here.")
+        empty_state("No winners on this day.", "Players with Total G/L above zero will appear here.")
     else:
         winners_display = _styled_members(winners)
         st.dataframe(
@@ -276,15 +314,15 @@ with top_cols[0]:
         )
 
 with top_cols[1]:
-    section_title("Top Losers", "Lowest (most negative) Total G/L in the selected range.")
+    section_title("Top Losers", f"Lowest (most negative) Total G/L on **{day_label}**.")
     try:
-        losers = fetch_top_losers(start_date, end_date, search=search)
+        losers = fetch_top_losers(table_day, table_day, search=search)
     except Exception as exc:
         st.error("Failed to load top losers.")
         st.caption(str(exc))
         losers = pd.DataFrame()
     if losers is None or losers.empty:
-        empty_state("No losers in this range.", "Players with Total G/L below zero will appear here.")
+        empty_state("No losers on this day.", "Players with Total G/L below zero will appear here.")
     else:
         losers_display = _styled_members(losers)
         st.dataframe(
@@ -294,16 +332,16 @@ with top_cols[1]:
             hide_index=True,
         )
 
-section_title("All Members", "Every stored snapshot in the selected range, including transfers.")
+section_title("All Members", f"Every member snapshot on **{day_label}**, including transfers.")
 try:
-    members = fetch_member_rows(start_date, end_date, search)
+    members = fetch_member_rows(table_day, table_day, search)
 except Exception as exc:
     st.error("Failed to load member P&L rows.")
     st.caption(str(exc))
     members = pd.DataFrame()
 
 if members is None or members.empty:
-    empty_state("No member rows for the selected filters.", "Try widening the date range.")
+    empty_state("No member rows for this day.", "Pick another table date, or import that day's P&L file.")
 else:
     members_display = _styled_members(members)
     st.dataframe(
@@ -315,7 +353,7 @@ else:
     st.download_button(
         ":arrow_down: Download member P&L CSV",
         data=members.to_csv(index=False).encode("utf-8"),
-        file_name="player_winnings.csv",
+        file_name=f"player_winnings_{table_day.strftime('%Y%m%d')}.csv",
         mime="text/csv",
         type="secondary",
     )
