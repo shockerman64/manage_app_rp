@@ -12,8 +12,10 @@ import streamlit as st
 from app.services.august_cohort import (
     DEFAULT_INACTIVE_DAYS,
     comparison_summary,
+    describe_filters,
     export_filename,
     filter_comparison,
+    filter_slug,
     list_cohort_csvs,
     load_cohort_comparison,
     parse_cohort_csv,
@@ -43,6 +45,7 @@ page_header(
 _COLUMN_LABELS = {
     "login_id": "Login ID",
     "member_id": "Member ID",
+    "phone_number": "Phone Number",
     "registered_at": "Registered",
     "cohort_status": "Cohort Status",
     "in_database": "In Database",
@@ -60,6 +63,7 @@ _COLUMN_LABELS = {
 _COLUMN_ORDER = [
     "login_id",
     "member_id",
+    "phone_number",
     "has_first_deposit",
     "first_deposit_at",
     "first_deposit_amount",
@@ -74,13 +78,21 @@ _COLUMN_ORDER = [
     "db_status",
 ]
 
-_SEGMENTS = [
-    ("All players", "all"),
-    ("Made first deposit", "first_deposit"),
-    ("No first deposit", "no_first_deposit"),
-    ("Inactive", "inactive"),
-    ("Not in database", "not_in_database"),
-]
+_DEPOSIT_OPTIONS = {
+    "Any": "any",
+    "Made first deposit": "yes",
+    "No first deposit": "no",
+}
+_ACTIVITY_OPTIONS = {
+    "Any": "any",
+    "Inactive": "inactive",
+    "Active": "active",
+}
+_DATABASE_OPTIONS = {
+    "Any": "any",
+    "In database": "yes",
+    "Not in database": "no",
+}
 
 
 def _yes_no(series: pd.Series) -> pd.Series:
@@ -105,6 +117,7 @@ def _render_table(frame: pd.DataFrame, *, download_name: str, empty_title: str, 
         column_config=merged_column_config(
             datetime_column_config(["Registered", "First Deposit At", "Last Login"]),
             amount_column_config(["First Deposit Amount"]),
+            {"Phone Number": st.column_config.TextColumn("Phone Number")},
         ),
         use_container_width=True,
         hide_index=True,
@@ -158,25 +171,17 @@ else:
     )
     st.stop()
 
-filter_cols = st.columns([1, 1.4])
-with filter_cols[0]:
-    inactive_days = int(
-        st.number_input(
-            "Inactive after (days)",
-            min_value=1,
-            max_value=365,
-            value=DEFAULT_INACTIVE_DAYS,
-            step=1,
-            help="A player is inactive when days since the latest known login reach this number.",
-            key="cohort_inactive_days",
-        )
+inactive_days = int(
+    st.number_input(
+        "Inactive after (days)",
+        min_value=1,
+        max_value=365,
+        value=DEFAULT_INACTIVE_DAYS,
+        step=1,
+        help="A player is inactive when days since the latest known login reach this number.",
+        key="cohort_inactive_days",
     )
-with filter_cols[1]:
-    search = st.text_input(
-        "Search login or member ID",
-        placeholder="Login ID or Member ID",
-        key="cohort_search",
-    )
+)
 
 as_of = date.today()
 try:
@@ -216,18 +221,44 @@ if comparison.empty:
     empty_state("No players in this file.", "Check that the CSV has Member ID or Login ID columns.")
     st.stop()
 
-tabs = st.tabs([label for label, _ in _SEGMENTS])
-for tab, (label, segment) in zip(tabs, _SEGMENTS):
-    with tab:
-        filtered = filter_comparison(comparison, segment=segment, search=search)
-        if segment == "inactive":
-            filtered = filtered.sort_values("days_since_login", ascending=False, na_position="last")
-        elif segment == "first_deposit":
-            filtered = filtered.sort_values("first_deposit_at", ascending=True, na_position="last")
-        st.caption(f"{len(filtered):,} row(s) in **{label}**.")
-        _render_table(
-            filtered,
-            download_name=export_filename(source_name, segment),
-            empty_title=f"No players in {label.lower()}.",
-            empty_hint="Choose another file, adjust the inactive threshold, or clear the search.",
-        )
+section_title(
+    "Table filters",
+    "Each choice applies on its own. Pick more than one to keep players who match every choice.",
+)
+choice_cols = st.columns(4)
+with choice_cols[0]:
+    deposit_label = st.selectbox("First deposit", list(_DEPOSIT_OPTIONS), key="cohort_filter_deposit")
+with choice_cols[1]:
+    activity_label = st.selectbox("Activity", list(_ACTIVITY_OPTIONS), key="cohort_filter_activity")
+with choice_cols[2]:
+    database_label = st.selectbox("Database", list(_DATABASE_OPTIONS), key="cohort_filter_database")
+with choice_cols[3]:
+    search = st.text_input(
+        "Search",
+        placeholder="Login, member ID, or phone",
+        key="cohort_search",
+    )
+
+deposit = _DEPOSIT_OPTIONS[deposit_label]
+activity = _ACTIVITY_OPTIONS[activity_label]
+in_database = _DATABASE_OPTIONS[database_label]
+filtered = filter_comparison(
+    comparison,
+    deposit=deposit,
+    activity=activity,
+    in_database=in_database,
+    search=search,
+)
+if activity == "inactive":
+    filtered = filtered.sort_values("days_since_login", ascending=False, na_position="last")
+elif deposit == "yes":
+    filtered = filtered.sort_values("first_deposit_at", ascending=True, na_position="last")
+
+filter_label = describe_filters(deposit, activity, in_database)
+st.caption(f"**{len(filtered):,}** of {len(comparison):,} player(s) · **{filter_label}**.")
+_render_table(
+    filtered,
+    download_name=export_filename(source_name, filter_slug(deposit, activity, in_database)),
+    empty_title="No players match these filters.",
+    empty_hint="Set a filter back to Any, or clear the search.",
+)

@@ -20,7 +20,8 @@ SELECT
     NULLIF(TRIM(member_id), '') AS member_id,
     NULLIF(TRIM(login_id), '') AS login_id,
     status,
-    last_login_at
+    last_login_at,
+    NULLIF(TRIM(raw_data->>'Contact Number'), '') AS phone_number
 FROM members
 WHERE NULLIF(TRIM(member_id), '') = ANY(:member_ids)
    OR NULLIF(TRIM(login_id), '') = ANY(:login_ids)
@@ -146,6 +147,7 @@ def parse_cohort_csv(content: bytes) -> pd.DataFrame:
         {
             "login_id": cleaned["Login ID"],
             "member_id": cleaned["Member ID"],
+            "phone_number": cleaned["Contact Number"] if "Contact Number" in cleaned.columns else None,
             "cohort_status": cleaned["Status"] if "Status" in cleaned.columns else None,
             "registered_at": registered,
             "file_last_login_at": file_last_login,
@@ -282,10 +284,13 @@ def build_cohort_comparison(
                 days_since_login = 0
         inactive = days_since_login is None or days_since_login >= inactive_days
 
+        file_phone = _clean_cell(row.get("phone_number"))
+        db_phone = _clean_cell(member.get("phone_number")) if member else None
         compared.append(
             {
                 "login_id": login_id,
                 "member_id": member_id,
+                "phone_number": file_phone or db_phone,
                 "registered_at": _naive_timestamp(row.get("registered_at")),
                 "cohort_status": row.get("cohort_status"),
                 "in_database": member is not None,
@@ -327,24 +332,81 @@ def comparison_summary(frame: pd.DataFrame) -> dict[str, int]:
     }
 
 
-def filter_comparison(frame: pd.DataFrame, *, segment: str, search: str) -> pd.DataFrame:
+def describe_filters(deposit: str, activity: str, in_database: str) -> str:
+    parts: list[str] = []
+    if deposit == "yes":
+        parts.append("Made first deposit")
+    elif deposit == "no":
+        parts.append("No first deposit")
+    if activity == "inactive":
+        parts.append("Inactive")
+    elif activity == "active":
+        parts.append("Active")
+    if in_database == "yes":
+        parts.append("In database")
+    elif in_database == "no":
+        parts.append("Not in database")
+    return " and ".join(parts) if parts else "All players"
+
+
+def filter_slug(deposit: str, activity: str, in_database: str) -> str:
+    parts: list[str] = []
+    if deposit == "yes":
+        parts.append("first_deposit")
+    elif deposit == "no":
+        parts.append("no_first_deposit")
+    if activity == "inactive":
+        parts.append("inactive")
+    elif activity == "active":
+        parts.append("active")
+    if in_database == "yes":
+        parts.append("in_database")
+    elif in_database == "no":
+        parts.append("not_in_database")
+    return "_".join(parts) if parts else "all"
+
+
+def filter_comparison(
+    frame: pd.DataFrame,
+    *,
+    deposit: str = "any",
+    activity: str = "any",
+    in_database: str = "any",
+    search: str = "",
+) -> pd.DataFrame:
+    """Keep rows that match every selected filter. Unset filters stay open."""
     if frame is None or frame.empty:
         return frame
     result = frame
-    if segment == "first_deposit":
+    if deposit == "yes":
         result = result[result["has_first_deposit"]]
-    elif segment == "no_first_deposit":
+    elif deposit == "no":
         result = result[~result["has_first_deposit"]]
-    elif segment == "inactive":
+    if activity == "inactive":
         result = result[result["inactive"]]
-    elif segment == "not_in_database":
+    elif activity == "active":
+        result = result[~result["inactive"]]
+    if in_database == "yes":
+        result = result[result["in_database"]]
+    elif in_database == "no":
         result = result[~result["in_database"]]
 
     needle = search.strip().lower()
     if needle:
         login = result["login_id"].fillna("").astype(str).str.lower()
         member = result["member_id"].fillna("").astype(str).str.lower()
-        result = result[login.str.contains(needle, regex=False) | member.str.contains(needle, regex=False)]
+        phone = (
+            result["phone_number"].fillna("").astype(str).str.lower()
+            if "phone_number" in result.columns
+            else pd.Series("", index=result.index)
+        )
+        phone_digits = phone.str.replace(r"\D", "", regex=True)
+        needle_digits = re.sub(r"\D", "", needle)
+        matched = login.str.contains(needle, regex=False) | member.str.contains(needle, regex=False)
+        matched = matched | phone.str.contains(needle, regex=False)
+        if needle_digits:
+            matched = matched | phone_digits.str.contains(needle_digits, regex=False)
+        result = result[matched]
     return result.reset_index(drop=True)
 
 

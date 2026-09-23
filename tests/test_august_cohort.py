@@ -7,6 +7,7 @@ from app.services.august_cohort import (
     comparison_summary,
     export_filename,
     filter_comparison,
+    filter_slug,
     list_cohort_csvs,
     parse_cohort_csv,
     project_root,
@@ -14,10 +15,10 @@ from app.services.august_cohort import (
 )
 
 _SAMPLE = (
-    "Group,Merchant,Login ID,Member ID,Status,Date Created,Last Login Time\n"
-    '="RP1M (G109)",="RP1M (161)",="Alpha",="100@161",="Active",="08/31/2026 22:33:41",="08/31/2026 22:33:41"\n'
-    '="RP1M (G109)",="RP1M (161)",="Beta",="200@161",="Active",="08/02/2026 10:00:00",="09/20/2026 08:00:00"\n'
-    '="RP1M (G109)",="RP1M (161)",="Gamma",="300@161",="Active",="08/15/2026 12:00:00",="08/15/2026 12:05:00"\n'
+    "Group,Merchant,Login ID,Member ID,Contact Number,Status,Date Created,Last Login Time\n"
+    '="RP1M (G109)",="RP1M (161)",="Alpha",="100@161",="62-811111",="Active",="08/31/2026 22:33:41",="08/31/2026 22:33:41"\n'
+    '="RP1M (G109)",="RP1M (161)",="Beta",="200@161",="62-822222",="Active",="08/02/2026 10:00:00",="09/20/2026 08:00:00"\n'
+    '="RP1M (G109)",="RP1M (161)",="Gamma",="300@161",="",="Active",="08/15/2026 12:00:00",="08/15/2026 12:05:00"\n'
 ).encode()
 
 
@@ -95,6 +96,7 @@ def test_comparison_flags_first_deposit_and_inactivity():
     assert bool(alpha["has_first_deposit"]) is False
     assert int(alpha["days_since_login"]) == 23
     assert bool(alpha["inactive"]) is True
+    assert alpha["phone_number"] == "62-811111"
 
     beta = by_login.loc["Beta"]
     assert bool(beta["has_first_deposit"]) is True
@@ -118,10 +120,39 @@ def test_comparison_flags_first_deposit_and_inactivity():
     assert summary["no_first_deposit"] == 1
     assert summary["inactive"] == 2
 
-    inactive = filter_comparison(compared, segment="inactive", search="")
+    inactive = filter_comparison(compared, activity="inactive")
     assert set(inactive["login_id"]) == {"Alpha", "Gamma"}
-    no_deposit = filter_comparison(compared, segment="no_first_deposit", search="alp")
+    no_deposit = filter_comparison(compared, deposit="no", search="alp")
     assert list(no_deposit["login_id"]) == ["Alpha"]
+    combined = filter_comparison(compared, deposit="no", activity="inactive", in_database="yes")
+    assert list(combined["login_id"]) == ["Alpha"]
+    by_phone = filter_comparison(compared, search="62822222")
+    assert list(by_phone["login_id"]) == ["Beta"]
+    assert filter_slug("no", "inactive", "any") == "no_first_deposit_inactive"
+
+
+def test_blank_file_phone_uses_database_contact():
+    cohort = parse_cohort_csv(_SAMPLE)
+    members = pd.DataFrame(
+        [
+            {
+                "member_id": "300@161",
+                "login_id": "Gamma",
+                "status": "Active",
+                "last_login_at": pd.Timestamp("2026-08-15 12:05:00"),
+                "phone_number": '="62-833333"',
+            }
+        ]
+    )
+    compared = build_cohort_comparison(
+        cohort,
+        members,
+        pd.DataFrame(),
+        as_of=date(2026, 9, 23),
+        inactive_days=14,
+    )
+    gamma = compared.set_index("login_id").loc["Gamma"]
+    assert gamma["phone_number"] == "62-833333"
 
 
 def test_list_cohort_csvs_keeps_member_exports_only(tmp_path):
