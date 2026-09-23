@@ -433,6 +433,7 @@ _NAV_SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
             ("main.py", "Home", ":material/home:"),
             ("pages/04_rp1m_overview.py", "RP1M Overview", ":material/account_balance_wallet:"),
             ("pages/05_player_winnings.py", "Player Winnings", ":material/trophy:"),
+            ("pages/06_cohort_check.py", "Cohort Check", ":material/group:"),
         ],
     ),
     (
