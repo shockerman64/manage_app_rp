@@ -38,6 +38,7 @@ page_header(
     "Cohort Check",
     "Compare a member export from any month with the current players database. "
     "**First deposit** is the earliest approved RP1M deposit. "
+    "**Second deposit** is the next approved RP1M deposit after that. "
     "**Inactive** means the latest known login (database, or the file when it is newer) "
     "is older than the day threshold.",
 )
@@ -53,6 +54,9 @@ _COLUMN_LABELS = {
     "has_first_deposit": "First Deposit",
     "first_deposit_at": "First Deposit At",
     "first_deposit_amount": "First Deposit Amount",
+    "has_second_deposit": "Second Deposit",
+    "second_deposit_at": "Second Deposit At",
+    "second_deposit_amount": "Second Deposit Amount",
     "approved_deposit_count": "Approved Deposits",
     "last_login_at": "Last Login",
     "days_since_login": "Days Since Login",
@@ -67,6 +71,9 @@ _COLUMN_ORDER = [
     "has_first_deposit",
     "first_deposit_at",
     "first_deposit_amount",
+    "has_second_deposit",
+    "second_deposit_at",
+    "second_deposit_amount",
     "inactive",
     "days_since_login",
     "last_login_at",
@@ -82,6 +89,11 @@ _DEPOSIT_OPTIONS = {
     "Any": "any",
     "Made first deposit": "yes",
     "No first deposit": "no",
+}
+_SECOND_DEPOSIT_OPTIONS = {
+    "Any": "any",
+    "Made second deposit": "yes",
+    "No second deposit": "no",
 }
 _ACTIVITY_OPTIONS = {
     "Any": "any",
@@ -101,7 +113,7 @@ def _yes_no(series: pd.Series) -> pd.Series:
 
 def _display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     display = frame.loc[:, [column for column in _COLUMN_ORDER if column in frame.columns]].copy()
-    for column in ("in_database", "has_first_deposit", "inactive"):
+    for column in ("in_database", "has_first_deposit", "has_second_deposit", "inactive"):
         if column in display.columns:
             display[column] = _yes_no(display[column])
     return rename_columns(display, _COLUMN_LABELS)
@@ -115,8 +127,8 @@ def _render_table(frame: pd.DataFrame, *, download_name: str, empty_title: str, 
     st.dataframe(
         display,
         column_config=merged_column_config(
-            datetime_column_config(["Registered", "First Deposit At", "Last Login"]),
-            amount_column_config(["First Deposit Amount"]),
+            datetime_column_config(["Registered", "First Deposit At", "Second Deposit At", "Last Login"]),
+            amount_column_config(["First Deposit Amount", "Second Deposit Amount"]),
             {"Phone Number": st.column_config.TextColumn("Phone Number")},
         ),
         use_container_width=True,
@@ -204,12 +216,13 @@ st.caption(
 )
 
 section_title("Comparison", f"Results for **{source_name}**.")
-kpi_cols = st.columns(5)
+kpi_cols = st.columns(6)
 kpi_cols[0].metric("Players", format_count(summary["players"]))
 kpi_cols[1].metric("In Database", format_count(summary["in_database"]))
 kpi_cols[2].metric("First Deposit", format_count(summary["first_deposit"]))
 kpi_cols[3].metric("No First Deposit", format_count(summary["no_first_deposit"]))
-kpi_cols[4].metric(f"Inactive ({inactive_days}d+)", format_count(summary["inactive"]))
+kpi_cols[4].metric("Second Deposit", format_count(summary["second_deposit"]))
+kpi_cols[5].metric(f"Inactive ({inactive_days}d+)", format_count(summary["inactive"]))
 
 if summary["not_in_database"]:
     st.caption(
@@ -225,14 +238,20 @@ section_title(
     "Table filters",
     "Each choice applies on its own. Pick more than one to keep players who match every choice.",
 )
-choice_cols = st.columns(4)
+choice_cols = st.columns(5)
 with choice_cols[0]:
     deposit_label = st.selectbox("First deposit", list(_DEPOSIT_OPTIONS), key="cohort_filter_deposit")
 with choice_cols[1]:
-    activity_label = st.selectbox("Activity", list(_ACTIVITY_OPTIONS), key="cohort_filter_activity")
+    second_deposit_label = st.selectbox(
+        "Second deposit",
+        list(_SECOND_DEPOSIT_OPTIONS),
+        key="cohort_filter_second_deposit",
+    )
 with choice_cols[2]:
-    database_label = st.selectbox("Database", list(_DATABASE_OPTIONS), key="cohort_filter_database")
+    activity_label = st.selectbox("Activity", list(_ACTIVITY_OPTIONS), key="cohort_filter_activity")
 with choice_cols[3]:
+    database_label = st.selectbox("Database", list(_DATABASE_OPTIONS), key="cohort_filter_database")
+with choice_cols[4]:
     search = st.text_input(
         "Search",
         placeholder="Login, member ID, or phone",
@@ -240,25 +259,32 @@ with choice_cols[3]:
     )
 
 deposit = _DEPOSIT_OPTIONS[deposit_label]
+second_deposit = _SECOND_DEPOSIT_OPTIONS[second_deposit_label]
 activity = _ACTIVITY_OPTIONS[activity_label]
 in_database = _DATABASE_OPTIONS[database_label]
 filtered = filter_comparison(
     comparison,
     deposit=deposit,
+    second_deposit=second_deposit,
     activity=activity,
     in_database=in_database,
     search=search,
 )
 if activity == "inactive":
     filtered = filtered.sort_values("days_since_login", ascending=False, na_position="last")
+elif second_deposit == "yes":
+    filtered = filtered.sort_values("second_deposit_at", ascending=True, na_position="last")
 elif deposit == "yes":
     filtered = filtered.sort_values("first_deposit_at", ascending=True, na_position="last")
 
-filter_label = describe_filters(deposit, activity, in_database)
+filter_label = describe_filters(deposit, activity, in_database, second_deposit)
 st.caption(f"**{len(filtered):,}** of {len(comparison):,} player(s) · **{filter_label}**.")
 _render_table(
     filtered,
-    download_name=export_filename(source_name, filter_slug(deposit, activity, in_database)),
+    download_name=export_filename(
+        source_name,
+        filter_slug(deposit, activity, in_database, second_deposit),
+    ),
     empty_title="No players match these filters.",
     empty_hint="Set a filter back to Any, or clear the search.",
 )

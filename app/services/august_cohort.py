@@ -221,6 +221,16 @@ def _player_deposits(
     return matched
 
 
+def _deposit_fields(row: dict | None) -> tuple[pd.Timestamp | None, float | None]:
+    if row is None:
+        return None, None
+    when = _naive_timestamp(row.get("txn_datetime_local"))
+    amount = row.get("amount")
+    if amount is None or pd.isna(amount):
+        return when, None
+    return when, float(amount)
+
+
 def build_cohort_comparison(
     cohort: pd.DataFrame,
     members: pd.DataFrame,
@@ -264,10 +274,9 @@ def build_cohort_comparison(
             str(login_id) if login_id else None,
         )
         first = player_deposits[0] if player_deposits else None
-        first_at = _naive_timestamp(first.get("txn_datetime_local")) if first else None
-        first_amount = None
-        if first is not None and first.get("amount") is not None and not pd.isna(first.get("amount")):
-            first_amount = float(first["amount"])
+        second = player_deposits[1] if len(player_deposits) > 1 else None
+        first_at, first_amount = _deposit_fields(first)
+        second_at, second_amount = _deposit_fields(second)
 
         file_login = _naive_timestamp(row.get("file_last_login_at"))
         db_login = _naive_timestamp(member.get("last_login_at")) if member else None
@@ -298,6 +307,9 @@ def build_cohort_comparison(
                 "has_first_deposit": first is not None,
                 "first_deposit_at": first_at,
                 "first_deposit_amount": first_amount,
+                "has_second_deposit": second is not None,
+                "second_deposit_at": second_at,
+                "second_deposit_amount": second_amount,
                 "approved_deposit_count": len(player_deposits),
                 "last_login_at": last_login,
                 "days_since_login": days_since_login,
@@ -319,6 +331,7 @@ def comparison_summary(frame: pd.DataFrame) -> dict[str, int]:
             "in_database": 0,
             "first_deposit": 0,
             "no_first_deposit": 0,
+            "second_deposit": 0,
             "inactive": 0,
             "not_in_database": 0,
         }
@@ -327,17 +340,27 @@ def comparison_summary(frame: pd.DataFrame) -> dict[str, int]:
         "in_database": int(frame["in_database"].sum()),
         "first_deposit": int(frame["has_first_deposit"].sum()),
         "no_first_deposit": int((~frame["has_first_deposit"]).sum()),
+        "second_deposit": int(frame["has_second_deposit"].sum()),
         "inactive": int(frame["inactive"].sum()),
         "not_in_database": int((~frame["in_database"]).sum()),
     }
 
 
-def describe_filters(deposit: str, activity: str, in_database: str) -> str:
+def describe_filters(
+    deposit: str,
+    activity: str,
+    in_database: str,
+    second_deposit: str = "any",
+) -> str:
     parts: list[str] = []
     if deposit == "yes":
         parts.append("Made first deposit")
     elif deposit == "no":
         parts.append("No first deposit")
+    if second_deposit == "yes":
+        parts.append("Made second deposit")
+    elif second_deposit == "no":
+        parts.append("No second deposit")
     if activity == "inactive":
         parts.append("Inactive")
     elif activity == "active":
@@ -349,12 +372,21 @@ def describe_filters(deposit: str, activity: str, in_database: str) -> str:
     return " and ".join(parts) if parts else "All players"
 
 
-def filter_slug(deposit: str, activity: str, in_database: str) -> str:
+def filter_slug(
+    deposit: str,
+    activity: str,
+    in_database: str,
+    second_deposit: str = "any",
+) -> str:
     parts: list[str] = []
     if deposit == "yes":
         parts.append("first_deposit")
     elif deposit == "no":
         parts.append("no_first_deposit")
+    if second_deposit == "yes":
+        parts.append("second_deposit")
+    elif second_deposit == "no":
+        parts.append("no_second_deposit")
     if activity == "inactive":
         parts.append("inactive")
     elif activity == "active":
@@ -373,6 +405,7 @@ def filter_comparison(
     activity: str = "any",
     in_database: str = "any",
     search: str = "",
+    second_deposit: str = "any",
 ) -> pd.DataFrame:
     """Keep rows that match every selected filter. Unset filters stay open."""
     if frame is None or frame.empty:
@@ -382,6 +415,10 @@ def filter_comparison(
         result = result[result["has_first_deposit"]]
     elif deposit == "no":
         result = result[~result["has_first_deposit"]]
+    if second_deposit == "yes":
+        result = result[result["has_second_deposit"]]
+    elif second_deposit == "no":
+        result = result[~result["has_second_deposit"]]
     if activity == "inactive":
         result = result[result["inactive"]]
     elif activity == "active":

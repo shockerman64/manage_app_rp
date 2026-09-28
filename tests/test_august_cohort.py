@@ -70,6 +70,12 @@ def test_comparison_flags_first_deposit_and_inactivity():
             {
                 "member_id": "200@161",
                 "login_id": "Beta",
+                "amount": 90,
+                "txn_datetime_local": pd.Timestamp("2026-09-15 09:00:00"),
+            },
+            {
+                "member_id": "200@161",
+                "login_id": "Beta",
                 "amount": 20,
                 "txn_datetime_local": pd.Timestamp("2026-08-10 09:00:00"),
             },
@@ -94,6 +100,7 @@ def test_comparison_flags_first_deposit_and_inactivity():
     alpha = by_login.loc["Alpha"]
     assert bool(alpha["in_database"]) is True
     assert bool(alpha["has_first_deposit"]) is False
+    assert bool(alpha["has_second_deposit"]) is False
     assert int(alpha["days_since_login"]) == 23
     assert bool(alpha["inactive"]) is True
     assert alpha["phone_number"] == "62-811111"
@@ -102,7 +109,10 @@ def test_comparison_flags_first_deposit_and_inactivity():
     assert bool(beta["has_first_deposit"]) is True
     assert float(beta["first_deposit_amount"]) == 20
     assert beta["first_deposit_at"] == pd.Timestamp("2026-08-10 09:00:00")
-    assert int(beta["approved_deposit_count"]) == 2
+    assert bool(beta["has_second_deposit"]) is True
+    assert float(beta["second_deposit_amount"]) == 50
+    assert beta["second_deposit_at"] == pd.Timestamp("2026-09-02 09:00:00")
+    assert int(beta["approved_deposit_count"]) == 3
     assert beta["last_login_source"] == "Cohort file"
     assert int(beta["days_since_login"]) == 3
     assert bool(beta["inactive"]) is False
@@ -110,6 +120,9 @@ def test_comparison_flags_first_deposit_and_inactivity():
     gamma = by_login.loc["Gamma"]
     assert bool(gamma["in_database"]) is False
     assert bool(gamma["has_first_deposit"]) is True
+    assert bool(gamma["has_second_deposit"]) is False
+    assert pd.isna(gamma["second_deposit_at"])
+    assert pd.isna(gamma["second_deposit_amount"])
     assert gamma["last_login_source"] == "Cohort file"
 
     summary = comparison_summary(compared)
@@ -118,6 +131,7 @@ def test_comparison_flags_first_deposit_and_inactivity():
     assert summary["not_in_database"] == 1
     assert summary["first_deposit"] == 2
     assert summary["no_first_deposit"] == 1
+    assert summary["second_deposit"] == 1
     assert summary["inactive"] == 2
 
     inactive = filter_comparison(compared, activity="inactive")
@@ -126,9 +140,14 @@ def test_comparison_flags_first_deposit_and_inactivity():
     assert list(no_deposit["login_id"]) == ["Alpha"]
     combined = filter_comparison(compared, deposit="no", activity="inactive", in_database="yes")
     assert list(combined["login_id"]) == ["Alpha"]
+    second = filter_comparison(compared, second_deposit="yes")
+    assert list(second["login_id"]) == ["Beta"]
+    once = filter_comparison(compared, deposit="yes", second_deposit="no")
+    assert list(once["login_id"]) == ["Gamma"]
     by_phone = filter_comparison(compared, search="62822222")
     assert list(by_phone["login_id"]) == ["Beta"]
     assert filter_slug("no", "inactive", "any") == "no_first_deposit_inactive"
+    assert filter_slug("yes", "any", "any", "no") == "first_deposit_no_second_deposit"
 
 
 def test_blank_file_phone_uses_database_contact():
