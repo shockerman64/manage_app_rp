@@ -47,6 +47,7 @@ _COLUMN_LABELS = {
     "login_id": "Login ID",
     "member_id": "Member ID",
     "phone_number": "Phone Number",
+    "referral_id": "Referral ID",
     "registered_at": "Registered",
     "cohort_status": "Cohort Status",
     "in_database": "In Database",
@@ -68,6 +69,7 @@ _COLUMN_ORDER = [
     "login_id",
     "member_id",
     "phone_number",
+    "referral_id",
     "has_first_deposit",
     "first_deposit_at",
     "first_deposit_amount",
@@ -129,7 +131,10 @@ def _render_table(frame: pd.DataFrame, *, download_name: str, empty_title: str, 
         column_config=merged_column_config(
             datetime_column_config(["Registered", "First Deposit At", "Second Deposit At", "Last Login"]),
             amount_column_config(["First Deposit Amount", "Second Deposit Amount"]),
-            {"Phone Number": st.column_config.TextColumn("Phone Number")},
+            {
+                "Phone Number": st.column_config.TextColumn("Phone Number"),
+                "Referral ID": st.column_config.TextColumn("Referral ID"),
+            },
         ),
         use_container_width=True,
         hide_index=True,
@@ -254,7 +259,7 @@ with choice_cols[3]:
 with choice_cols[4]:
     search = st.text_input(
         "Search",
-        placeholder="Login, member ID, or phone",
+        placeholder="Login, member ID, phone, or referral",
         key="cohort_search",
     )
 

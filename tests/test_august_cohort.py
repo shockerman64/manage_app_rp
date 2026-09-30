@@ -150,6 +150,47 @@ def test_comparison_flags_first_deposit_and_inactivity():
     assert filter_slug("yes", "any", "any", "no") == "first_deposit_no_second_deposit"
 
 
+def test_referral_id_prefers_the_file_then_the_database():
+    content = (
+        "Login ID,Member ID,Referral ID,Date Created\n"
+        'Alpha,100@161,="FILE1",08/31/2026 22:33:41\n'
+        "Beta,200@161,,08/02/2026 10:00:00\n"
+        "Gamma,300@161,,08/15/2026 12:00:00\n"
+    ).encode()
+    cohort = parse_cohort_csv(content)
+    assert cohort.loc[cohort["login_id"] == "Alpha", "referral_id"].iloc[0] == "FILE1"
+
+    members = pd.DataFrame(
+        [
+            {
+                "member_id": "100@161",
+                "login_id": "Alpha",
+                "status": "Active",
+                "referral_id": "DB1",
+            },
+            {
+                "member_id": "200@161",
+                "login_id": "Beta",
+                "status": "Active",
+                "referral_id": '="DB2"',
+            },
+        ]
+    )
+    compared = build_cohort_comparison(
+        cohort,
+        members,
+        pd.DataFrame(),
+        as_of=date(2026, 9, 23),
+        inactive_days=14,
+    )
+    by_login = compared.set_index("login_id")
+    assert by_login.loc["Alpha", "referral_id"] == "FILE1"
+    assert by_login.loc["Beta", "referral_id"] == "DB2"
+    assert by_login.loc["Gamma", "referral_id"] is None or pd.isna(by_login.loc["Gamma", "referral_id"])
+    found = filter_comparison(compared, search="db2")
+    assert list(found["login_id"]) == ["Beta"]
+
+
 def test_blank_file_phone_uses_database_contact():
     cohort = parse_cohort_csv(_SAMPLE)
     members = pd.DataFrame(
