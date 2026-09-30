@@ -22,7 +22,8 @@ SELECT
     status,
     last_login_at,
     NULLIF(TRIM(raw_data->>'Contact Number'), '') AS phone_number,
-    NULLIF(TRIM(raw_data->>'Referral ID'), '') AS referral_id
+    NULLIF(TRIM(raw_data->>'Referral ID'), '') AS referral_id,
+    NULLIF(TRIM(raw_data->>'Bank Acct Name'), '') AS bank_acct_name
 FROM members
 WHERE NULLIF(TRIM(member_id), '') = ANY(:member_ids)
    OR NULLIF(TRIM(login_id), '') = ANY(:login_ids)
@@ -150,6 +151,7 @@ def parse_cohort_csv(content: bytes) -> pd.DataFrame:
             "member_id": cleaned["Member ID"],
             "phone_number": cleaned["Contact Number"] if "Contact Number" in cleaned.columns else None,
             "referral_id": cleaned["Referral ID"] if "Referral ID" in cleaned.columns else None,
+            "bank_acct_name": cleaned["Bank Acct Name"] if "Bank Acct Name" in cleaned.columns else None,
             "cohort_status": cleaned["Status"] if "Status" in cleaned.columns else None,
             "registered_at": registered,
             "file_last_login_at": file_last_login,
@@ -299,12 +301,15 @@ def build_cohort_comparison(
         db_phone = _clean_cell(member.get("phone_number")) if member else None
         file_referral = _clean_cell(row.get("referral_id"))
         db_referral = _clean_cell(member.get("referral_id")) if member else None
+        file_bank_name = _clean_cell(row.get("bank_acct_name"))
+        db_bank_name = _clean_cell(member.get("bank_acct_name")) if member else None
         compared.append(
             {
                 "login_id": login_id,
                 "member_id": member_id,
                 "phone_number": file_phone or db_phone,
                 "referral_id": file_referral or db_referral,
+                "bank_acct_name": file_bank_name or db_bank_name,
                 "registered_at": _naive_timestamp(row.get("registered_at")),
                 "cohort_status": row.get("cohort_status"),
                 "in_database": member is not None,
@@ -447,10 +452,16 @@ def filter_comparison(
             if "referral_id" in result.columns
             else pd.Series("", index=result.index)
         )
+        bank_name = (
+            result["bank_acct_name"].fillna("").astype(str).str.lower()
+            if "bank_acct_name" in result.columns
+            else pd.Series("", index=result.index)
+        )
         phone_digits = phone.str.replace(r"\D", "", regex=True)
         needle_digits = re.sub(r"\D", "", needle)
         matched = login.str.contains(needle, regex=False) | member.str.contains(needle, regex=False)
         matched = matched | phone.str.contains(needle, regex=False) | referral.str.contains(needle, regex=False)
+        matched = matched | bank_name.str.contains(needle, regex=False)
         if needle_digits:
             matched = matched | phone_digits.str.contains(needle_digits, regex=False)
         result = result[matched]

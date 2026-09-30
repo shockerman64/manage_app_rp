@@ -191,6 +191,47 @@ def test_referral_id_prefers_the_file_then_the_database():
     assert list(found["login_id"]) == ["Beta"]
 
 
+def test_bank_acct_name_prefers_the_file_then_the_database():
+    content = (
+        "Login ID,Member ID,Bank Acct Name,Date Created\n"
+        'Alpha,100@161,="File Name",08/31/2026 22:33:41\n'
+        "Beta,200@161,,08/02/2026 10:00:00\n"
+        "Gamma,300@161,,08/15/2026 12:00:00\n"
+    ).encode()
+    cohort = parse_cohort_csv(content)
+    assert cohort.loc[cohort["login_id"] == "Alpha", "bank_acct_name"].iloc[0] == "File Name"
+
+    members = pd.DataFrame(
+        [
+            {
+                "member_id": "100@161",
+                "login_id": "Alpha",
+                "status": "Active",
+                "bank_acct_name": "Database Name",
+            },
+            {
+                "member_id": "200@161",
+                "login_id": "Beta",
+                "status": "Active",
+                "bank_acct_name": '="Saved Name"',
+            },
+        ]
+    )
+    compared = build_cohort_comparison(
+        cohort,
+        members,
+        pd.DataFrame(),
+        as_of=date(2026, 9, 23),
+        inactive_days=14,
+    )
+    by_login = compared.set_index("login_id")
+    assert by_login.loc["Alpha", "bank_acct_name"] == "File Name"
+    assert by_login.loc["Beta", "bank_acct_name"] == "Saved Name"
+    assert by_login.loc["Gamma", "bank_acct_name"] is None or pd.isna(by_login.loc["Gamma", "bank_acct_name"])
+    found = filter_comparison(compared, search="saved")
+    assert list(found["login_id"]) == ["Beta"]
+
+
 def test_blank_file_phone_uses_database_contact():
     cohort = parse_cohort_csv(_SAMPLE)
     members = pd.DataFrame(

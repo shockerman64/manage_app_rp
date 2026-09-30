@@ -48,6 +48,7 @@ _COLUMN_LABELS = {
     "member_id": "Member ID",
     "phone_number": "Phone Number",
     "referral_id": "Referral ID",
+    "bank_acct_name": "Bank Acct Name",
     "registered_at": "Registered",
     "cohort_status": "Cohort Status",
     "in_database": "In Database",
@@ -70,6 +71,7 @@ _COLUMN_ORDER = [
     "member_id",
     "phone_number",
     "referral_id",
+    "bank_acct_name",
     "has_first_deposit",
     "first_deposit_at",
     "first_deposit_amount",
@@ -134,6 +136,7 @@ def _render_table(frame: pd.DataFrame, *, download_name: str, empty_title: str, 
             {
                 "Phone Number": st.column_config.TextColumn("Phone Number"),
                 "Referral ID": st.column_config.TextColumn("Referral ID"),
+                "Bank Acct Name": st.column_config.TextColumn("Bank Acct Name"),
             },
         ),
         use_container_width=True,
@@ -259,7 +262,7 @@ with choice_cols[3]:
 with choice_cols[4]:
     search = st.text_input(
         "Search",
-        placeholder="Login, member ID, phone, or referral",
+        placeholder="Login, member ID, phone, referral, or name",
         key="cohort_search",
     )
 
