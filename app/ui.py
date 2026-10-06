@@ -12,6 +12,7 @@ BRAND_VENDOR = "OASIS PAY"
 SOURCE_LABELS: dict[str, str] = {
     "internal": BRAND_INTERNAL,
     "vendor": BRAND_VENDOR,
+    "vendor_disbursement": f"{BRAND_VENDOR} Disbursements",
     "members": "Members",
     "member_pnl": "Member P&L",
 }

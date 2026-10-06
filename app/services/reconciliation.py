@@ -14,6 +14,7 @@ from app.db import engine
 class ReconciliationSummary:
     run_id: str
     counts: dict[str, int]
+    reopened_rows: int = 0
 
 
 def _normalize_status(source: str, status: str | None) -> str:
@@ -32,6 +33,7 @@ def _normalize_status(source: str, status: str | None) -> str:
         "SETTLED": "SUCCESS",
         "SUCCESS": "SUCCESS",
         "FAILED": "FAILED",
+        "REJECTED": "FAILED",
         "EXPIRED": "FAILED",
         "PENDING": "PENDING",
     }
@@ -45,6 +47,36 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
     with engine.begin() as conn:
         run_id = str(conn.execute(text("INSERT INTO reconciliation_runs DEFAULT VALUES RETURNING id")).scalar_one())
         conn.execute(text("DELETE FROM reconciliation_results WHERE run_id = :run_id"), {"run_id": run_id})
+        # One-sided rows are provisional. When the other source arrives later
+        # (for example an API disbursement for a QRIS IM withdrawal), drop the
+        # old result so this run can match the pair.
+        reopened_rows = conn.execute(
+            text(
+                """
+                DELETE FROM reconciliation_results rr
+                WHERE (
+                    rr.result_status = 'internal_only'
+                    AND EXISTS (
+                        SELECT 1
+                        FROM transactions_normalized v
+                        WHERE v.source_system = 'vendor'
+                          AND v.correlation_id = rr.ticket_no
+                    )
+                ) OR (
+                    rr.result_status = 'vendor_only'
+                    AND EXISTS (
+                        SELECT 1
+                        FROM transactions_normalized i
+                        WHERE i.source_system = 'internal'
+                          AND i.pay_method = 'QRIS IM'
+                          AND i.ticket_no = rr.correlation_id
+                    )
+                )
+                """
+            )
+        ).rowcount
+        if reopened_rows is None or reopened_rows < 0:
+            reopened_rows = 0
 
         rows = conn.execute(
             text(
@@ -173,4 +205,4 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
             )
             counts[result_status] += 1
 
-    return ReconciliationSummary(run_id=run_id, counts=dict(counts))
+    return ReconciliationSummary(run_id=run_id, counts=dict(counts), reopened_rows=int(reopened_rows))

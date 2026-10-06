@@ -11,16 +11,19 @@ Internal tool for manual daily transaction imports, persistent metrics, transact
 - Manual **Members** CSV import (member registry for FTD) with upsert by Member ID
 - Manual **Member P&L** CSV import (daily `4.3_P_&_L_By_Member` snapshots) with upsert by report date + Member ID
 - Manual **OASIS PAY** XLSX/CSV import with dedupe by file hash
+- Manual **OASIS PAY disbursement** XLSX/CSV import for QRIS IM withdrawals (`request_type = API` only)
 - Persistent Postgres storage (raw + normalized + members + member P&L + reconciliation tables)
 - **RP1M Overview** page: Approved deposit/withdraw totals, member-aware **first-time deposit (FTD)** metrics, date presets, daily breakdown table, CSV export
 - **Player Winnings** page: daily member P&L KPIs (winnings, losses, net G/L), top winners/losers, daily trend, browse table, CSV export
 - **Metrics** page: KPIs (deposit, withdraw, net flow, approval rate), date presets, daily trend chart, breakdowns by pay method / status / merchant
 - **View Transactions** page: unified browser for every RP1M + OASIS PAY row with rich filters (date presets, source, type, status, pay method, amount range, free-text search), KPI strip, daily volume chart, paginated table, and full-CSV export
 - **Reconciliation** page:
-  - Internal scope: `Pay Method = QRIS IM`
+  - Internal scope: `Pay Method = QRIS IM` (deposits and withdrawals)
+  - Deposits match the OASIS PAY gateway file; withdrawals match OASIS PAY disbursements with `request_type = API`
   - Match key: RP1M `Ticket #` vs OASIS PAY `correlation_id`
   - Time normalization: RP1M is treated as vendor timezone +1 hour
   - Run Health indicator, matched-vs-mismatched donut, daily summary, import diagnostics
+  - One-sided rows are checked again when the missing side is imported later
 
 ## Pages / Navigation
 
@@ -56,11 +59,18 @@ The DB init button now lives in the sidebar's collapsed **Admin** expander; the 
 3. Open the **Upload Members** tab and import the member registry CSV (required for FTD on RP1M Overview)
 4. Open the **Upload Member P&L** tab and import a daily `4.3_P_&_L_By_Member_YYYYMMDD_YYYYMMDD_ALL.csv`
 5. Open the **OASIS PAY** upload tab and import a vendor XLSX/CSV
-6. Open **RP1M Overview** for Approved deposit/withdraw and FTD metrics
-7. Open **Player Winnings** for daily member P&L (winnings, losses, top players)
-8. Open the **Metrics** page for broader RP1M KPI dashboards
-9. Open **View Transactions** to filter / search / export across both sources
-10. Open **Reconciliation** and click **Run Reconciliation** to compare QRIS rows
+6. Open the **OASIS PAY Disbursements** tab and import the disbursement file (only `request_type = API` rows are stored)
+7. Open **RP1M Overview** for Approved deposit/withdraw and FTD metrics
+8. Open **Player Winnings** for daily member P&L (winnings, losses, top players)
+9. Open the **Metrics** page for broader RP1M KPI dashboards
+10. Open **View Transactions** to filter / search / export across both sources
+11. Open **Reconciliation** and click **Run Reconciliation** to compare QRIS deposits and withdrawals
+
+### OASIS PAY disbursements (QRIS IM withdrawals)
+
+Required columns: `transaction_time`, `correlation_id`, `amount`, `status`, `request_type`.
+
+Only `request_type = API` is imported. Those rows are withdrawals: `correlation_id` matches RP1M `Ticket #`, and `amount` is already in gateway units (do not scale it again). `transaction_time` uses the same vendor clock as the deposit file.
 
 ### Members CSV (FTD)
 
@@ -95,4 +105,4 @@ RP1M transaction history before the cutoff month is not in the database; FTD is 
 
 Schema migration SQL is in `sql/schema.sql`.
 
-The schema retains `source_system IN ('internal', 'vendor')` for transactions and adds a `members` table, a `member_pnl_daily` table, plus `import_batches.source_type` values `'members'` and `'member_pnl'`. The brand labels **RP1M** / **OASIS PAY** / **Members** / **Member P&L** are applied at the display layer via `app/ui.py` (`SOURCE_LABELS`, etc.).
+The schema retains `source_system IN ('internal', 'vendor')` for transactions and adds a `members` table, a `member_pnl_daily` table, plus `import_batches.source_type` values `'members'`, `'member_pnl'`, and `'vendor_disbursement'`. Disbursement rows are stored as `source_system = 'vendor'` with `txn_type = 'Withdraw'`. The brand labels **RP1M** / **OASIS PAY** / **OASIS PAY Disbursements** / **Members** / **Member P&L** are applied at the display layer via `app/ui.py` (`SOURCE_LABELS`, etc.).

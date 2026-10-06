@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS import_batches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_type TEXT NOT NULL CHECK (source_type IN ('internal', 'vendor', 'members', 'member_pnl')),
+    source_type TEXT NOT NULL CHECK (source_type IN ('internal', 'vendor', 'vendor_disbursement', 'members', 'member_pnl')),
     original_filename TEXT NOT NULL,
     file_hash TEXT NOT NULL,
     period_start TIMESTAMPTZ NULL,
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Expand source_type check on databases created before members / member P&L imports.
+-- Expand source_type check on databases created before later import types.
 ALTER TABLE import_batches DROP CONSTRAINT IF EXISTS import_batches_source_type_check;
 ALTER TABLE import_batches ADD CONSTRAINT import_batches_source_type_check
-    CHECK (source_type IN ('internal', 'vendor', 'members', 'member_pnl'));
+    CHECK (source_type IN ('internal', 'vendor', 'vendor_disbursement', 'members', 'member_pnl'));

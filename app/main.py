@@ -9,7 +9,7 @@ import streamlit as st
 
 from app.db import init_db
 from app.services.analytics import get_import_history, query_frame
-from app.services.ingestion import import_internal_csv, import_vendor_file
+from app.services.ingestion import import_internal_csv, import_vendor_disbursement_file, import_vendor_file
 from app.services.member_ingestion import import_members_csv
 from app.services.member_pnl_ingestion import (
     import_member_pnl_csv,
@@ -113,15 +113,16 @@ else:
 section_title(
     "Upload Data",
     f"Import {BRAND_INTERNAL} transactions, member registry (for FTD), "
-    f"daily member P&L, or {BRAND_VENDOR} gateway files.",
+    f"daily member P&L, {BRAND_VENDOR} gateway deposits, or {BRAND_VENDOR} disbursements.",
 )
 
-tab_internal, tab_members, tab_pnl, tab_vendor = st.tabs(
+tab_internal, tab_members, tab_pnl, tab_vendor, tab_disbursement = st.tabs(
     [
         f":inbox_tray:  Upload {BRAND_INTERNAL} Transactions",
         ":busts_in_silhouette:  Upload Members",
         ":trophy:  Upload Member P&L",
         f":inbox_tray:  Upload {BRAND_VENDOR} Transactions",
+        f":outbox_tray:  Upload {BRAND_VENDOR} Disbursements",
     ]
 )
 
@@ -278,6 +279,45 @@ with tab_vendor:
                     st.success(f"Imported {BRAND_VENDOR} rows: {result.inserted_rows:,}")
             except Exception as exc:
                 st.error(f"{BRAND_VENDOR} import failed.")
+                st.caption(str(exc))
+
+with tab_disbursement:
+    st.caption(
+        f"Upload the {BRAND_VENDOR} disbursement file for QRIS IM withdrawals. "
+        "Only rows with request type API are imported. Dashboard and other request types are skipped. "
+        "Amounts are already in gateway units, same as the deposit file. "
+        "Run Initialize / Migrate DB once from the sidebar before the first disbursement import."
+    )
+    disbursement_file = st.file_uploader(
+        f"Upload {BRAND_VENDOR} disbursements (.xlsx preferred, .csv supported)",
+        type=["xlsx", "csv"],
+        key="disbursement_uploader",
+    )
+    if disbursement_file is not None:
+        if st.button(f"Import {BRAND_VENDOR} Disbursements", type="primary", use_container_width=True):
+            try:
+                with st.status(f"Importing {BRAND_VENDOR} disbursements...", expanded=False) as status:
+                    result = import_vendor_disbursement_file(
+                        disbursement_file.name,
+                        disbursement_file.getvalue(),
+                    )
+                    status.update(label="Import finished.", state="complete")
+                if result.duplicate_file:
+                    st.warning(f"This {BRAND_VENDOR} disbursement file was already imported (same hash).")
+                else:
+                    msg = f"Imported {BRAND_VENDOR} disbursement rows: {result.inserted_rows:,}"
+                    notes: list[str] = []
+                    if result.skipped_non_api:
+                        notes.append(f"skipped {result.skipped_non_api:,} non-API rows")
+                    if result.skipped_incomplete:
+                        notes.append(
+                            f"skipped {result.skipped_incomplete:,} API rows missing correlation id or amount"
+                        )
+                    if notes:
+                        msg += f" ({'; '.join(notes)})"
+                    st.success(msg)
+            except Exception as exc:
+                st.error(f"{BRAND_VENDOR} disbursement import failed.")
                 st.caption(str(exc))
 
 

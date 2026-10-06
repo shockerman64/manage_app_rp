@@ -16,6 +16,11 @@ from app.db import engine
 def _clean_excel_string(value: object) -> str | None:
     if value is None:
         return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
     output = str(value).strip()
     if output.startswith('="') and output.endswith('"'):
         output = output[2:-1]
@@ -72,6 +77,8 @@ class ImportResult:
     batch_id: str
     inserted_rows: int
     duplicate_file: bool
+    skipped_non_api: int = 0
+    skipped_incomplete: int = 0
 
 
 _INTERNAL_RAW_INSERT_SQL = text(
@@ -371,3 +378,202 @@ def import_vendor_file(filename: str, content: bytes) -> ImportResult:
         )
 
     return ImportResult(batch_id=batch_id, inserted_rows=inserted_rows, duplicate_file=False)
+
+
+def _is_api_request(value: object) -> bool:
+    text_value = _clean_excel_string(value)
+    return text_value is not None and text_value.upper() == "API"
+
+
+def _correlation_id_as_text(value: object) -> str | None:
+    """Excel often reads ticket ids as numbers. Keep them as plain digit strings."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return None
+    if hasattr(value, "item"):
+        try:
+            native = value.item()
+        except Exception:
+            native = None
+        if native is not None and native is not value:
+            return _correlation_id_as_text(native)
+    return _clean_excel_string(value)
+
+
+def _read_tabular_file(filename: str, content: bytes) -> pd.DataFrame:
+    if filename.lower().endswith(".xlsx"):
+        return pd.read_excel(io.BytesIO(content), engine="openpyxl")
+    return _read_csv_auto(content)
+
+
+@dataclass
+class ParsedDisbursements:
+    raw_rows: list[dict]
+    normalized_rows: list[dict]
+    skipped_non_api: int
+    skipped_incomplete: int
+    period_start: datetime | None
+    period_end: datetime | None
+
+
+def parse_disbursement_frame(frame: pd.DataFrame) -> ParsedDisbursements:
+    """Keep request_type API rows and shape them as OASIS PAY withdrawals.
+
+    Amounts in this file are already in gateway units (same scale as OASIS PAY
+    deposits). Dashboard and other request types are not QRIS IM withdrawals.
+    """
+    working = frame.copy()
+    working.columns = [col.strip().lower() for col in _normalize_columns(list(working.columns))]
+    required = {
+        "transaction_time",
+        "correlation_id",
+        "amount",
+        "status",
+        "request_type",
+    }
+    missing = required - set(working.columns)
+    if missing:
+        raise ValueError(f"Disbursement file missing columns: {sorted(missing)}")
+
+    skipped_non_api = int((~working["request_type"].map(_is_api_request)).sum())
+    api_rows = working.loc[working["request_type"].map(_is_api_request)]
+
+    raw_rows: list[dict] = []
+    normalized_rows: list[dict] = []
+    skipped_incomplete = 0
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+
+    for idx, row in api_rows.iterrows():
+        raw = {str(k): row[k] for k in working.columns}
+        correlation_id = _correlation_id_as_text(raw.get("correlation_id"))
+        amount = _to_decimal(raw.get("amount"))
+        if correlation_id is None or amount is None:
+            skipped_incomplete += 1
+            continue
+
+        txn_dt = pd.to_datetime(raw.get("transaction_time"), errors="coerce")
+        txn_value = txn_dt.to_pydatetime() if pd.notna(txn_dt) else None
+        if txn_value:
+            period_start = txn_value if period_start is None else min(period_start, txn_value)
+            period_end = txn_value if period_end is None else max(period_end, txn_value)
+
+        withdrawal_method = _clean_excel_string(raw.get("withdrawal_method"))
+        bank_name = _clean_excel_string(raw.get("bank_name"))
+        raw_json = _json_safe_dict(raw)
+        meta = {
+            "request_type": "API",
+            "withdrawal_method": withdrawal_method,
+            "bank_name": bank_name,
+            "original_transaction_no": _clean_excel_string(raw.get("original_transaction_no")),
+            "reference_no": _clean_excel_string(raw.get("reference_no")),
+        }
+        raw_rows.append(
+            {
+                "row_number": int(idx) + 2,
+                "client_name": _clean_excel_string(raw.get("client_name")),
+                "txn_time_raw": _clean_excel_string(raw.get("transaction_time")),
+                "correlation_id": correlation_id,
+                "amount": amount,
+                "currency": _clean_excel_string(raw.get("currency")),
+                "fee_amount": _to_decimal(raw.get("fee_amount")),
+                "status": _clean_excel_string(raw.get("status")),
+                "payment_type": withdrawal_method,
+                "merchant_name": bank_name,
+                "username": _clean_excel_string(raw.get("username")),
+                "raw_data": json.dumps(raw_json, default=str, allow_nan=False),
+            }
+        )
+        normalized_rows.append(
+            {
+                "reference_id": correlation_id,
+                "correlation_id": correlation_id,
+                "merchant": bank_name,
+                "login_id": _clean_excel_string(raw.get("username")),
+                "currency": _clean_excel_string(raw.get("currency")),
+                "amount": amount,
+                "fee": _to_decimal(raw.get("fee_amount")),
+                "status": _clean_excel_string(raw.get("status")),
+                "txn_datetime_local": txn_value + pd.Timedelta(hours=1) if txn_value else None,
+                "txn_datetime_vendor": txn_value,
+                "meta": json.dumps(meta, default=str, allow_nan=False),
+            }
+        )
+
+    return ParsedDisbursements(
+        raw_rows=raw_rows,
+        normalized_rows=normalized_rows,
+        skipped_non_api=skipped_non_api,
+        skipped_incomplete=skipped_incomplete,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+
+_VENDOR_DISBURSEMENT_NORMALIZED_INSERT_SQL = text(
+    """
+    INSERT INTO transactions_normalized (
+        source_system, source_row_id, batch_id, reference_id, correlation_id, merchant,
+        login_id, txn_type, pay_method, currency, amount, fee, status,
+        txn_datetime_local, txn_datetime_vendor, meta
+    )
+    VALUES (
+        'vendor', NULL, :batch_id, :reference_id, :correlation_id, :merchant,
+        :login_id, 'Withdraw', 'QRIS IM', :currency, :amount, :fee, :status,
+        :txn_datetime_local, :txn_datetime_vendor, CAST(:meta AS jsonb)
+    )
+    ON CONFLICT (source_system, reference_id) DO NOTHING
+    """
+)
+
+
+def import_vendor_disbursement_file(filename: str, content: bytes) -> ImportResult:
+    batch_id, duplicate = _create_batch("vendor_disbursement", filename, content)
+    if duplicate or not batch_id:
+        return ImportResult(batch_id="", inserted_rows=0, duplicate_file=True)
+
+    frame = _read_tabular_file(filename, content)
+    parsed = parse_disbursement_frame(frame)
+    raw_rows = [{"batch_id": batch_id, **row} for row in parsed.raw_rows]
+    normalized_rows = [{"batch_id": batch_id, **row} for row in parsed.normalized_rows]
+
+    inserted_rows = len(normalized_rows)
+    with engine.begin() as conn:
+        if raw_rows:
+            _execute_in_chunks(conn, _VENDOR_RAW_INSERT_SQL, raw_rows)
+        if normalized_rows:
+            _execute_in_chunks(conn, _VENDOR_DISBURSEMENT_NORMALIZED_INSERT_SQL, normalized_rows)
+
+        conn.execute(
+            text(
+                """
+                UPDATE import_batches
+                SET row_count = :row_count, period_start = :period_start, period_end = :period_end
+                WHERE id = :batch_id
+                """
+            ),
+            {
+                "row_count": inserted_rows,
+                "period_start": parsed.period_start,
+                "period_end": parsed.period_end,
+                "batch_id": batch_id,
+            },
+        )
+
+    return ImportResult(
+        batch_id=batch_id,
+        inserted_rows=inserted_rows,
+        duplicate_file=False,
+        skipped_non_api=parsed.skipped_non_api,
+        skipped_incomplete=parsed.skipped_incomplete,
+    )

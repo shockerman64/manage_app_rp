@@ -32,7 +32,7 @@ from app.ui import (
 setup_page("Reconciliation", ":link:")
 page_header(
     "Reconciliation",
-    f"Compare QRIS {BRAND_INTERNAL} transactions against {BRAND_VENDOR} QRIS transactions.",
+    f"Compare QRIS {BRAND_INTERNAL} deposits and withdrawals with {BRAND_VENDOR} gateway deposits and API disbursements.",
 )
 
 
@@ -45,11 +45,12 @@ top_left, top_right = st.columns([2, 1], gap="large")
 with top_left:
     section_title(
         "Run Configuration",
-        f"QRIS {BRAND_INTERNAL} transactions are compared against {BRAND_VENDOR} QRIS transactions.",
+        f"QRIS {BRAND_INTERNAL} deposits are compared with {BRAND_VENDOR} gateway deposits. "
+        f"QRIS {BRAND_INTERNAL} withdrawals are compared with {BRAND_VENDOR} API disbursements.",
     )
     st.info(
         f"Amount normalization: {BRAND_INTERNAL} amount x {RECON_INTERNAL_AMOUNT_MULTIPLIER:g}. "
-        "Incremental mode skips records reconciled in previous runs."
+        "Records already reconciled are skipped. One-sided rows are checked again when the other side is imported."
     )
     tolerance_minutes = st.number_input(
         "Time tolerance (minutes)",
@@ -76,6 +77,8 @@ with top_left:
                 result = run_reconciliation(time_tolerance_minutes=int(tolerance_minutes))
                 status.update(label=f"Reconciliation completed. Run ID: {result.run_id}", state="complete")
             st.success(f"Reconciliation completed. Run ID: {result.run_id}")
+            if result.reopened_rows:
+                st.caption(f"Re-checked {result.reopened_rows:,} previously one-sided rows.")
             counts_display = {RESULT_STATUS_LABELS.get(k, k): v for k, v in result.counts.items()}
             st.json(counts_display)
         except Exception as exc:
@@ -364,7 +367,9 @@ with tab_history:
         st.subheader("Daily Reconciliation Summary")
         st.caption(
             "Source totals are calculated from imported transactions. "
-            "Reconciled totals are calculated from reconciliation run results (can be lower in incremental mode)."
+            f"{BRAND_INTERNAL} includes QRIS IM deposits and withdrawals. "
+            f"{BRAND_VENDOR} includes gateway deposits and API disbursements. "
+            "Reconciled totals come from reconciliation results and can be lower until a new run picks up one-sided rows."
         )
         try:
             daily_summary = query_frame(
