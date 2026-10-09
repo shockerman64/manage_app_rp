@@ -229,4 +229,8 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
             )
             counts[result_status] += 1
 
+        if not counts:
+            conn.execute(text("DELETE FROM reconciliation_runs WHERE id = :run_id"), {"run_id": run_id})
+            run_id = ""
+
     return ReconciliationSummary(run_id=run_id, counts=dict(counts), reopened_rows=int(reopened_rows))
