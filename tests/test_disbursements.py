@@ -9,7 +9,7 @@ from app.services.ingestion import (
     _is_api_request,
     parse_disbursement_frame,
 )
-from app.services.reconciliation import _normalize_status
+from app.services.reconciliation import _countable_status_sql, _normalize_status, countable_result_sql
 
 SAMPLE_DISBURSEMENT = Path(__file__).resolve().parents[1] / (
     "Disbursements 2026-10-05 00_00 to 2026-10-06 23_59.xlsx"
@@ -82,6 +82,12 @@ def test_parse_keeps_api_withdrawals_and_drops_dashboard_rows():
 def test_parse_requires_disbursement_columns():
     with pytest.raises(ValueError, match="request_type"):
         parse_disbursement_frame(pd.DataFrame({"amount": [1], "status": ["FINALIZED"]}))
+
+
+def test_rejected_status_is_excluded_from_reconciliation_counts():
+    assert "<> 'REJECTED'" in _countable_status_sql("status")
+    assert "internal_status" in countable_result_sql()
+    assert "vendor_status" in countable_result_sql()
 
 
 def test_vendor_rejected_maps_like_internal_rejected():

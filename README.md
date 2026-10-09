@@ -24,6 +24,7 @@ Internal tool for manual daily transaction imports, persistent metrics, transact
   - Time normalization: RP1M is treated as vendor timezone +1 hour
   - Run Health indicator, matched-vs-mismatched donut, daily summary, import diagnostics
   - One-sided rows are checked again when the missing side is imported later
+  - `REJECTED` transactions are excluded from matching and from reconciliation totals
 
 ## Pages / Navigation
 

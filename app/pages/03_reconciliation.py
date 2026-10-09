@@ -11,7 +11,7 @@ import streamlit as st
 
 from app.config import RECON_INTERNAL_AMOUNT_MULTIPLIER, RECON_TIME_TOLERANCE_MINUTES
 from app.services.analytics import query_frame
-from app.services.reconciliation import run_reconciliation
+from app.services.reconciliation import countable_result_sql, run_reconciliation
 from app.ui import (
     BRAND_INTERNAL,
     BRAND_VENDOR,
@@ -28,6 +28,9 @@ from app.ui import (
     section_title,
     setup_page,
 )
+
+_COUNTED_RESULTS = countable_result_sql()
+_NOT_REJECTED = "UPPER(BTRIM(COALESCE(status, ''))) <> 'REJECTED'"
 
 setup_page("Reconciliation", ":link:")
 page_header(
@@ -50,7 +53,8 @@ with top_left:
     )
     st.info(
         f"Amount normalization: {BRAND_INTERNAL} amount x {RECON_INTERNAL_AMOUNT_MULTIPLIER:g}. "
-        "Records already reconciled are skipped. One-sided rows are checked again when the other side is imported."
+        "Records already reconciled are skipped. One-sided rows are checked again when the other side is imported. "
+        "Rejected transactions are excluded."
     )
     tolerance_minutes = st.number_input(
         "Time tolerance (minutes)",
@@ -134,17 +138,18 @@ tab_latest, tab_history = st.tabs([":mag: Latest Run Details", ":calendar: Run H
 with tab_latest:
     try:
         summary = query_frame(
-            """
+            f"""
             SELECT result_status, COUNT(*) AS count_rows
             FROM reconciliation_results
             WHERE run_id = :run_id
+              AND {_COUNTED_RESULTS}
             GROUP BY result_status
             ORDER BY count_rows DESC
             """,
             {"run_id": latest_run_id},
         )
         details = query_frame(
-            """
+            f"""
             SELECT
                 result_status, ticket_no, correlation_id,
                 internal_amount, vendor_amount,
@@ -153,6 +158,7 @@ with tab_latest:
                 delta_seconds, reason
             FROM reconciliation_results
             WHERE run_id = :run_id
+              AND {_COUNTED_RESULTS}
             ORDER BY id DESC
             """,
             {"run_id": latest_run_id},
@@ -326,7 +332,7 @@ with tab_history:
 
     try:
         run_summary = query_frame(
-            """
+            f"""
             SELECT
                 COUNT(*) AS total_records,
                 SUM(CASE WHEN result_status = 'matched' THEN 1 ELSE 0 END) AS matched_records,
@@ -334,6 +340,7 @@ with tab_history:
             FROM reconciliation_results
             WHERE COALESCE(vendor_txn_datetime::date, internal_txn_datetime_vendor_tz::date)
                   BETWEEN :start_date AND :end_date
+              AND {_COUNTED_RESULTS}
             """,
             {"start_date": start_date, "end_date": end_date},
         )
@@ -369,11 +376,12 @@ with tab_history:
             "Source totals are calculated from imported transactions. "
             f"{BRAND_INTERNAL} includes QRIS IM deposits and withdrawals. "
             f"{BRAND_VENDOR} includes gateway deposits and API disbursements. "
+            "Rejected transactions are excluded. "
             "Reconciled totals come from reconciliation results and can be lower until a new run picks up one-sided rows."
         )
         try:
             daily_summary = query_frame(
-                """
+                f"""
                 WITH internal_daily AS (
                     SELECT
                         txn_datetime_local::date AS txn_date,
@@ -382,6 +390,7 @@ with tab_history:
                     FROM transactions_normalized
                     WHERE source_system = 'internal'
                       AND pay_method = 'QRIS IM'
+                      AND {_NOT_REJECTED}
                       AND txn_datetime_local::date BETWEEN :start_date AND :end_date
                     GROUP BY txn_datetime_local::date
                 ),
@@ -392,6 +401,7 @@ with tab_history:
                         COALESCE(SUM(amount), 0) AS vendor_total_amount
                     FROM transactions_normalized
                     WHERE source_system = 'vendor'
+                      AND {_NOT_REJECTED}
                       AND txn_datetime_local::date BETWEEN :start_date AND :end_date
                     GROUP BY txn_datetime_local::date
                 ),
@@ -404,6 +414,7 @@ with tab_history:
                     FROM reconciliation_results
                     WHERE COALESCE(vendor_txn_datetime::date, internal_txn_datetime_vendor_tz::date)
                           BETWEEN :start_date AND :end_date
+                      AND {_COUNTED_RESULTS}
                     GROUP BY COALESCE(vendor_txn_datetime::date, internal_txn_datetime_vendor_tz::date)
                 ),
                 all_dates AS (
@@ -472,7 +483,7 @@ with tab_history:
         st.subheader("Daily Status Breakdown")
         try:
             daily_status = query_frame(
-                """
+                f"""
                 SELECT
                     COALESCE(vendor_txn_datetime::date, internal_txn_datetime_vendor_tz::date) AS txn_date,
                     result_status,
@@ -480,6 +491,7 @@ with tab_history:
                 FROM reconciliation_results
                 WHERE COALESCE(vendor_txn_datetime::date, internal_txn_datetime_vendor_tz::date)
                       BETWEEN :start_date AND :end_date
+                  AND {_COUNTED_RESULTS}
                 GROUP BY COALESCE(vendor_txn_datetime::date, internal_txn_datetime_vendor_tz::date), result_status
                 ORDER BY txn_date DESC, count_rows DESC
                 """,

@@ -17,6 +17,17 @@ class ReconciliationSummary:
     reopened_rows: int = 0
 
 
+def _countable_status_sql(column: str) -> str:
+    if not column.replace("_", "").replace(".", "").isalnum():
+        raise ValueError(f"Unsafe status column: {column}")
+    return f"UPPER(BTRIM(COALESCE({column}, ''))) <> 'REJECTED'"
+
+
+def countable_result_sql() -> str:
+    """Reconciliation results with a rejected side are left out of counts."""
+    return f"{_countable_status_sql('internal_status')} AND {_countable_status_sql('vendor_status')}"
+
+
 def _normalize_status(source: str, status: str | None) -> str:
     value = (status or "").strip().upper()
     if source == "internal":
@@ -50,6 +61,15 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
         # One-sided rows are provisional. When the other source arrives later
         # (for example an API disbursement for a QRIS IM withdrawal), drop the
         # old result so this run can match the pair.
+        conn.execute(
+            text(
+                """
+                DELETE FROM reconciliation_results
+                WHERE UPPER(BTRIM(COALESCE(internal_status, ''))) = 'REJECTED'
+                   OR UPPER(BTRIM(COALESCE(vendor_status, ''))) = 'REJECTED'
+                """
+            )
+        )
         reopened_rows = conn.execute(
             text(
                 """
@@ -61,6 +81,7 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
                         FROM transactions_normalized v
                         WHERE v.source_system = 'vendor'
                           AND v.correlation_id = rr.ticket_no
+                          AND UPPER(BTRIM(COALESCE(v.status, ''))) <> 'REJECTED'
                     )
                 ) OR (
                     rr.result_status = 'vendor_only'
@@ -70,6 +91,7 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
                         WHERE i.source_system = 'internal'
                           AND i.pay_method = 'QRIS IM'
                           AND i.ticket_no = rr.correlation_id
+                          AND UPPER(BTRIM(COALESCE(i.status, ''))) <> 'REJECTED'
                     )
                 )
                 """
@@ -92,6 +114,7 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
                     WHERE source_system = 'internal'
                       AND pay_method = 'QRIS IM'
                       AND ticket_no IS NOT NULL
+                      AND UPPER(BTRIM(COALESCE(status, ''))) <> 'REJECTED'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM reconciliation_results rr
@@ -108,6 +131,7 @@ def run_reconciliation(time_tolerance_minutes: int | None = None) -> Reconciliat
                     FROM transactions_normalized
                     WHERE source_system = 'vendor'
                       AND correlation_id IS NOT NULL
+                      AND UPPER(BTRIM(COALESCE(status, ''))) <> 'REJECTED'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM reconciliation_results rr
