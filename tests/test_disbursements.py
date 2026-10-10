@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -9,7 +10,12 @@ from app.services.ingestion import (
     _is_api_request,
     parse_disbursement_frame,
 )
-from app.services.reconciliation import _countable_status_sql, _normalize_status, countable_result_sql
+from app.services.reconciliation import (
+    _countable_status_sql,
+    _normalize_status,
+    classify_pair,
+    countable_result_sql,
+)
 
 SAMPLE_DISBURSEMENT = Path(__file__).resolve().parents[1] / (
     "Disbursements 2026-10-05 00_00 to 2026-10-06 23_59.xlsx"
@@ -88,6 +94,56 @@ def test_rejected_status_is_excluded_from_reconciliation_counts():
     assert "<> 'REJECTED'" in _countable_status_sql("status")
     assert "internal_status" in countable_result_sql()
     assert "vendor_status" in countable_result_sql()
+
+
+def test_classify_pair_flags_one_sided_amount_and_time_drift():
+    status, reason, delta = classify_pair(
+        ticket_no="1",
+        correlation_id=None,
+        internal_amount=Decimal("50"),
+        vendor_amount=None,
+        internal_status="Approved",
+        vendor_status=None,
+        internal_time=None,
+        vendor_time=None,
+        amount_multiplier=Decimal("1000"),
+        tolerance_minutes=10,
+    )
+    assert status == "internal_only"
+    assert delta is None
+    assert "correlation_id" in reason
+
+    base = datetime(2026, 10, 5, 21, 43, 46)
+    status, reason, delta = classify_pair(
+        ticket_no="888553815",
+        correlation_id="888553815",
+        internal_amount=Decimal("50"),
+        vendor_amount=Decimal("50000"),
+        internal_status="Approved",
+        vendor_status="FINALIZED",
+        internal_time=base,
+        vendor_time=datetime(2026, 10, 5, 21, 55, 41),
+        amount_multiplier=Decimal("1000"),
+        tolerance_minutes=10,
+    )
+    assert status == "time_mismatch"
+    assert delta == 715
+    assert "10 minutes" in reason
+
+    status, _, delta = classify_pair(
+        ticket_no="2",
+        correlation_id="2",
+        internal_amount=Decimal("50"),
+        vendor_amount=Decimal("40000"),
+        internal_status="Approved",
+        vendor_status="FINALIZED",
+        internal_time=base,
+        vendor_time=base,
+        amount_multiplier=Decimal("1000"),
+        tolerance_minutes=10,
+    )
+    assert status == "amount_mismatch"
+    assert delta == 0
 
 
 def test_vendor_rejected_maps_like_internal_rejected():

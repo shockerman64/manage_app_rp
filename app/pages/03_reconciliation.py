@@ -11,7 +11,7 @@ import streamlit as st
 
 from app.config import RECON_INTERNAL_AMOUNT_MULTIPLIER, RECON_TIME_TOLERANCE_MINUTES
 from app.services.analytics import query_frame
-from app.services.reconciliation import countable_result_sql, run_reconciliation
+from app.services.reconciliation import compare_local_day, countable_result_sql, run_reconciliation
 from app.ui import (
     BRAND_INTERNAL,
     BRAND_VENDOR,
@@ -20,6 +20,7 @@ from app.ui import (
     datetime_column_config,
     empty_state,
     format_count,
+    format_money,
     merged_column_config,
     page_header,
     relabel_result_status,
@@ -31,6 +32,90 @@ from app.ui import (
 
 _COUNTED_RESULTS = countable_result_sql()
 _NOT_REJECTED = "UPPER(BTRIM(COALESCE(status, ''))) <> 'REJECTED'"
+
+
+def _render_selected_day(txn_date, tolerance_minutes: int) -> None:
+    label = txn_date.strftime("%d/%m/%Y")
+    st.subheader(f"Day comparison · {label}")
+    st.caption(
+        f"QRIS {BRAND_INTERNAL} rows against {BRAND_VENDOR} rows on this local date. "
+        f"{BRAND_INTERNAL} amounts use the x{RECON_INTERNAL_AMOUNT_MULTIPLIER:g} multiplier. "
+        "Rejected transactions are excluded. A drifted ticket is missing on one side, "
+        "or failed the amount, status, or time check."
+    )
+    try:
+        compared = compare_local_day(txn_date, time_tolerance_minutes=tolerance_minutes)
+    except Exception as exc:
+        st.error("Failed to compare this date.")
+        st.caption(str(exc))
+        return
+
+    if compared.empty:
+        empty_state(f"No QRIS transactions on {label}.")
+        return
+
+    internal_rows = compared["ticket_no"].notna()
+    vendor_rows = compared["correlation_id"].notna()
+    internal_amount = compared.loc[internal_rows, "internal_amount_scaled"].fillna(0).sum()
+    vendor_amount = compared.loc[vendor_rows, "vendor_amount"].fillna(0).sum()
+    drifted = compared.loc[compared["result_status"] != "matched"].copy()
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric(f"{BRAND_INTERNAL} Txns", format_count(int(internal_rows.sum())))
+    metric_cols[1].metric(f"{BRAND_INTERNAL} Amount", format_money(internal_amount))
+    metric_cols[2].metric(f"{BRAND_VENDOR} Txns", format_count(int(vendor_rows.sum())))
+    metric_cols[3].metric(f"{BRAND_VENDOR} Amount", format_money(vendor_amount))
+    metric_cols[4].metric("Difference", format_money(internal_amount - vendor_amount))
+
+    st.subheader("Drifted transactions")
+    if drifted.empty:
+        empty_state(
+            f"No drifted transactions on {label}.",
+            "Every ticket on this local date matched.",
+        )
+        return
+
+    drifted = drifted.sort_values(
+        ["result_status", "ticket_no", "correlation_id"],
+        na_position="last",
+    )
+    drifted_display = relabel_result_status(drifted, "result_status")
+    drifted_display = rename_columns(
+        drifted_display,
+        {
+            "result_status": "Status",
+            "ticket_no": "Ticket #",
+            "correlation_id": "Correlation ID",
+            "txn_type": "Type",
+            "internal_amount_scaled": f"{BRAND_INTERNAL} Amount",
+            "vendor_amount": f"{BRAND_VENDOR} Amount",
+            "internal_status": f"{BRAND_INTERNAL} Status",
+            "vendor_status": f"{BRAND_VENDOR} Status",
+            "internal_txn_datetime_vendor_tz": f"{BRAND_INTERNAL} Time (vendor tz)",
+            "vendor_txn_datetime": f"{BRAND_VENDOR} Time",
+            "delta_seconds": "Delta (sec)",
+            "reason": "Reason",
+        },
+    )
+    drifted_display = drifted_display.drop(columns=["internal_amount"], errors="ignore")
+    column_config = merged_column_config(
+        amount_column_config([f"{BRAND_INTERNAL} Amount", f"{BRAND_VENDOR} Amount"]),
+        datetime_column_config([f"{BRAND_INTERNAL} Time (vendor tz)", f"{BRAND_VENDOR} Time"]),
+    )
+    st.dataframe(
+        drifted_display,
+        column_config=column_config,
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.download_button(
+        f":arrow_down: Download drifted transactions for {label}",
+        data=drifted_display.to_csv(index=False).encode("utf-8"),
+        file_name=f"reconciliation_drift_{txn_date.isoformat()}.csv",
+        mime="text/csv",
+        type="secondary",
+    )
+
 
 setup_page("Reconciliation", ":link:")
 page_header(
@@ -292,6 +377,7 @@ with tab_latest:
 
 
 with tab_history:
+    selected_txn_date = None
     history_left, history_right = st.columns([2, 1], gap="large")
     with history_left:
         st.subheader("Run History")
@@ -377,7 +463,8 @@ with tab_history:
             f"{BRAND_INTERNAL} includes QRIS IM deposits and withdrawals. "
             f"{BRAND_VENDOR} includes gateway deposits and API disbursements. "
             "Rejected transactions are excluded. "
-            "Reconciled totals come from reconciliation results and can be lower until a new run picks up one-sided rows."
+            "Reconciled totals come from reconciliation results and can be lower until a new run picks up one-sided rows. "
+            "Select a date to compare both sources and list the drifted tickets."
         )
         try:
             daily_summary = query_frame(
@@ -454,7 +541,7 @@ with tab_history:
             st.caption(str(exc))
             daily_summary = None
         if daily_summary is not None and not daily_summary.empty:
-            daily_summary = rename_columns(
+            daily_summary_display = rename_columns(
                 daily_summary,
                 {
                     "txn_date": "Date",
@@ -468,14 +555,21 @@ with tab_history:
                     "match_rate_pct": "Match Rate %",
                 },
             )
-            st.dataframe(
-                daily_summary,
+            daily_selection = st.dataframe(
+                daily_summary_display,
                 column_config=amount_column_config(
                     [f"Source {BRAND_INTERNAL} Amount", f"Source {BRAND_VENDOR} Amount"]
                 ),
                 use_container_width=True,
                 hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="daily_summary_date",
             )
+            selected_positions = daily_selection.selection.rows
+            if selected_positions:
+                selected_value = daily_summary.iloc[selected_positions[0]]["txn_date"]
+                selected_txn_date = pd.to_datetime(selected_value).date()
         elif daily_summary is not None:
             empty_state("No daily summary rows for this date range.")
 
@@ -599,3 +693,6 @@ with tab_history:
                 use_container_width=True,
                 hide_index=True,
             )
+
+    if selected_txn_date is not None:
+        _render_selected_day(selected_txn_date, int(tolerance_minutes))
