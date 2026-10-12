@@ -161,6 +161,19 @@ row1[2].metric(
 row2[0].metric("FTD Count", format_count(ftd_count) if ftd_enabled else "—")
 row2[1].metric("Total Withdraw Amount", format_money(summary.get("total_withdraw_amount")))
 row2[2].metric("Total Withdraws", format_count(summary.get("total_withdraws")))
+row3 = st.columns(4)
+row3[0].metric("Total New Registers", format_count(summary.get("new_registers")))
+row3[1].metric(
+    "Total Bonus",
+    format_count(summary.get("bonus_players")),
+    help="Distinct members with a non-zero Stakes-Bonus Amt in the selected range.",
+)
+row3[2].metric("Total Bonus Amount", format_money(summary.get("bonus_amount")))
+row3[3].metric("Total Commission", format_money(summary.get("commission_amount")))
+st.caption(
+    "New registers use the Members registry (Date Created). "
+    "Bonus and commission use the daily Member P&L import."
+)
 
 if ftd_enabled and unmatched > 0:
     st.caption(
@@ -186,7 +199,11 @@ with affiliate_cols[1]:
         st.success("Facebook affiliate codes saved.")
         st.rerun()
 
-section_title("Daily Breakdown", "One row per calendar day in the selected range.")
+section_title(
+    "Daily Breakdown",
+    "One row per calendar day in the selected range. "
+    "Players with Bonus, Bonus Amount, Commission, and Adjustment come from the daily Member P&L import.",
+)
 if facebook_affiliate_codes:
     codes_label = ", ".join(f"**{code}**" for code in facebook_affiliate_codes)
     st.caption(
@@ -223,6 +240,10 @@ else:
             "new_registers": "New Registers",
             "affiliated_registers": "Affiliated Registers",
             "facebook_registers": "Facebook Registers",
+            "bonus_players": "Players with Bonus",
+            "bonus_amount": "Bonus Amount",
+            "commission_amount": "Commission",
+            "adjustment_amount": "Adjustment",
         },
     )
     if not ftd_enabled:
@@ -234,7 +255,18 @@ else:
     st.dataframe(
         display,
         column_config=amount_column_config(
-            [c for c in ["Deposit Amount", "FTD Amount", "Withdraw Amount"] if c in display.columns]
+            [
+                c
+                for c in [
+                    "Deposit Amount",
+                    "FTD Amount",
+                    "Withdraw Amount",
+                    "Bonus Amount",
+                    "Commission",
+                    "Adjustment",
+                ]
+                if c in display.columns
+            ]
         ),
         use_container_width=True,
         hide_index=True,

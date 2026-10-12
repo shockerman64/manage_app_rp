@@ -111,6 +111,43 @@ def get_member_registry_count() -> int:
     return int(frame.iloc[0]["cnt"] or 0)
 
 
+def _fetch_range_activity(start_date: date | None, end_date: date | None) -> pd.Series:
+    """Registry registers plus Member P&L bonus and commission for a date range."""
+    member_date_filter, params = _date_clauses(start_date, end_date, column="m.created_date")
+    pnl_date_filter, _ = _date_clauses(start_date, end_date, column="p.report_date")
+    sql = f"""
+    SELECT
+        (SELECT COUNT(*) FROM members m WHERE {member_date_filter}) AS new_registers,
+        (
+            SELECT COUNT(DISTINCT p.member_id)
+            FROM member_pnl_daily p
+            WHERE {pnl_date_filter}
+              AND COALESCE(p.bonus_amt, 0) <> 0
+        ) AS bonus_players,
+        (
+            SELECT COALESCE(SUM(p.bonus_amt), 0)
+            FROM member_pnl_daily p
+            WHERE {pnl_date_filter}
+        ) AS bonus_amount,
+        (
+            SELECT COALESCE(SUM(p.comm), 0)
+            FROM member_pnl_daily p
+            WHERE {pnl_date_filter}
+        ) AS commission_amount
+    """
+    frame = query_frame(sql, params)
+    if frame.empty:
+        return pd.Series(
+            {
+                "new_registers": 0,
+                "bonus_players": 0,
+                "bonus_amount": 0,
+                "commission_amount": 0,
+            }
+        )
+    return frame.iloc[0]
+
+
 def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Series:
     date_filter, params = _date_clauses(start_date, end_date)
     ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_datetime_local")
@@ -153,9 +190,13 @@ def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Se
     FROM filtered
     """
     frame = query_frame(sql, params)
+    activity = _fetch_range_activity(start_date, end_date)
     if frame.empty:
-        return pd.Series(dtype=object)
-    return frame.iloc[0]
+        return activity
+    row = frame.iloc[0].copy()
+    for key, value in activity.items():
+        row[key] = value
+    return row
 
 
 def fetch_daily_breakdown(
@@ -167,6 +208,7 @@ def fetch_daily_breakdown(
     date_filter, params = _date_clauses(start_date, end_date)
     ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_datetime_local")
     member_date_filter, _ = _date_clauses(start_date, end_date, column="m.created_date")
+    pnl_date_filter, _ = _date_clauses(start_date, end_date, column="report_date")
     cutoff = ftd_cutoff_date()
     params["cutoff_date"] = cutoff
     params["cutoff_ts"] = pd.Timestamp(cutoff)
@@ -239,12 +281,25 @@ def fetch_daily_breakdown(
         WHERE {member_date_filter}
         GROUP BY m.created_date
     ),
+    pnl_daily AS (
+        SELECT
+            report_date AS day,
+            COUNT(*) FILTER (WHERE COALESCE(bonus_amt, 0) <> 0) AS bonus_players,
+            COALESCE(SUM(bonus_amt), 0) AS bonus_amount,
+            COALESCE(SUM(comm), 0) AS commission_amount,
+            COALESCE(SUM(adjustment_amt), 0) AS adjustment_amount
+        FROM member_pnl_daily
+        WHERE {pnl_date_filter}
+        GROUP BY report_date
+    ),
     days AS (
         SELECT day FROM daily_totals
         UNION
         SELECT day FROM ftd_daily
         UNION
         SELECT day FROM member_created
+        UNION
+        SELECT day FROM pnl_daily
     )
     SELECT
         days.day,
@@ -258,13 +313,18 @@ def fetch_daily_breakdown(
         COALESCE(d.withdraw_amount, 0) AS withdraw_amount,
         COALESCE(mc.new_registers, 0) AS new_registers,
         COALESCE(mc.affiliated_registers, 0) AS affiliated_registers,
-        COALESCE(mc.facebook_registers, 0) AS facebook_registers
+        COALESCE(mc.facebook_registers, 0) AS facebook_registers,
+        COALESCE(p.bonus_players, 0) AS bonus_players,
+        COALESCE(p.bonus_amount, 0) AS bonus_amount,
+        COALESCE(p.commission_amount, 0) AS commission_amount,
+        COALESCE(p.adjustment_amount, 0) AS adjustment_amount
     FROM days
     LEFT JOIN daily_totals d ON d.day = days.day
     LEFT JOIN ftd_daily f ON f.day = days.day
     LEFT JOIN affiliated_ftd_daily af ON af.day = days.day
     LEFT JOIN facebook_ftd_daily ff ON ff.day = days.day
     LEFT JOIN member_created mc ON mc.day = days.day
+    LEFT JOIN pnl_daily p ON p.day = days.day
     ORDER BY days.day
     """
     return query_frame(sql, params)
