@@ -19,9 +19,8 @@ from app.services.app_settings import (
 import app.services.rp1m_metrics as rp1m_metrics
 
 # A Streamlit rerun re-reads this page but can keep the previously imported
-# service module. Reload when that module predates the bonus and register KPIs.
-if not hasattr(rp1m_metrics, "_fetch_range_activity"):
-    importlib.reload(rp1m_metrics)
+# service module. Reload so overview totals match the file on disk.
+importlib.reload(rp1m_metrics)
 
 from app.services.rp1m_metrics import (  # noqa: E402
     backoffice_merchant_label,
@@ -170,18 +169,49 @@ row1[2].metric(
 row2[0].metric("FTD Count", format_count(ftd_count) if ftd_enabled else "—")
 row2[1].metric("Total Withdraw Amount", format_money(summary.get("total_withdraw_amount")))
 row2[2].metric("Total Withdraws", format_count(summary.get("total_withdraws")))
-row3 = st.columns(4)
-row3[0].metric("Total New Registers", format_count(summary.get("new_registers")))
-row3[1].metric(
-    "Total Bonus",
-    format_count(summary.get("bonus_players")),
-    help="Distinct members with a non-zero Stakes-Bonus Amt in the selected range.",
+
+st.markdown("**Member activity**")
+activity = st.columns(5)
+activity[0].metric(
+    "Active Members",
+    format_count(summary.get("active_members")),
+    help="Distinct members in the daily Member P&L import for this range.",
 )
-row3[2].metric("Total Bonus Amount", format_money(summary.get("bonus_amount")))
-row3[3].metric("Total Commission", format_money(summary.get("commission_amount")))
+activity[1].metric(
+    "New Registers",
+    format_count(summary.get("new_registers")),
+    help="Members whose Date Created falls in this range.",
+)
+activity[2].metric("Total G/L", format_money(summary.get("total_gl")))
+activity[3].metric("Bonus Amount", format_money(summary.get("bonus_amount")))
+activity[4].metric("Commission", format_money(summary.get("commission_amount")))
+
+st.markdown("**Transfer**")
+transfer = st.columns(4)
+transfer[0].metric("# In", format_count(summary.get("transfer_in_count")))
+transfer[1].metric("In Amount", format_money(summary.get("transfer_in_amount")))
+transfer[2].metric("# Out", format_count(summary.get("transfer_out_count")))
+transfer[3].metric("Out Amount", format_money(summary.get("transfer_out_amount")))
+
+st.markdown("**Adjustment**")
+adjustment = st.columns(4)
+adjustment[0].metric("# Adj", format_count(summary.get("adjustment_count")))
+adjustment[1].metric("Adj Amount", format_money(summary.get("adjustment_amount")))
+
+st.markdown("**Stakes**")
+stakes = st.columns(4)
+stakes[0].metric("# Stakes", format_count(summary.get("stakes_count")))
+stakes[1].metric("Stake Amount", format_money(summary.get("stake_amount")))
+stakes[2].metric("Valid Stake", format_money(summary.get("valid_stake_amount")))
+stakes[3].metric("Betting G/L", format_money(summary.get("betting_gl")))
+stakes_extra = st.columns(4)
+stakes_extra[0].metric("Stakes #Adj", format_count(summary.get("stakes_adj_count")))
+stakes_extra[1].metric("Stakes Adj Amount", format_money(summary.get("stakes_adj_amount")))
+stakes_extra[2].metric("Prize", format_money(summary.get("prize_amount")))
 st.caption(
+    "Member activity, transfer, adjustment, and stakes use the daily Member P&L import. "
     "New registers use the Members registry (Date Created). "
-    "Bonus and commission use the daily Member P&L import."
+    "Active Members counts each member once in the selected range."
 )
 
 if ftd_enabled and unmatched > 0:

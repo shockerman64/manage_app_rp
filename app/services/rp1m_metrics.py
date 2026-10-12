@@ -112,37 +112,54 @@ def get_member_registry_count() -> int:
 
 
 def _fetch_range_activity(start_date: date | None, end_date: date | None) -> pd.Series:
-    """Registry registers plus Member P&L bonus and commission for a date range."""
+    """Registry registers plus Member P&L totals for a date range."""
     member_date_filter, params = _date_clauses(start_date, end_date, column="m.created_date")
     pnl_date_filter, _ = _date_clauses(start_date, end_date, column="p.report_date")
     sql = f"""
     SELECT
         (SELECT COUNT(*) FROM members m WHERE {member_date_filter}) AS new_registers,
-        (
-            SELECT COUNT(DISTINCT p.member_id)
-            FROM member_pnl_daily p
-            WHERE {pnl_date_filter}
-              AND COALESCE(p.bonus_amt, 0) <> 0
-        ) AS bonus_players,
-        (
-            SELECT COALESCE(SUM(p.bonus_amt), 0)
-            FROM member_pnl_daily p
-            WHERE {pnl_date_filter}
-        ) AS bonus_amount,
-        (
-            SELECT COALESCE(SUM(p.comm), 0)
-            FROM member_pnl_daily p
-            WHERE {pnl_date_filter}
-        ) AS commission_amount
+        COUNT(DISTINCT p.member_id) AS active_members,
+        COALESCE(SUM(p.total_gl), 0) AS total_gl,
+        COALESCE(SUM(p.bonus_amt), 0) AS bonus_amount,
+        COALESCE(SUM(p.comm), 0) AS commission_amount,
+        COALESCE(SUM(p.transfer_in_count), 0) AS transfer_in_count,
+        COALESCE(SUM(p.transfer_in_amt), 0) AS transfer_in_amount,
+        COALESCE(SUM(p.transfer_out_count), 0) AS transfer_out_count,
+        COALESCE(SUM(p.transfer_out_amt), 0) AS transfer_out_amount,
+        COALESCE(SUM(p.adjustment_count), 0) AS adjustment_count,
+        COALESCE(SUM(p.adjustment_amt), 0) AS adjustment_amount,
+        COALESCE(SUM(p.stakes_count), 0) AS stakes_count,
+        COALESCE(SUM(p.stake_amt), 0) AS stake_amount,
+        COALESCE(SUM(p.valid_stake_amt), 0) AS valid_stake_amount,
+        COALESCE(SUM(p.gain_loss), 0) AS betting_gl,
+        COALESCE(SUM(p.stakes_adj_count), 0) AS stakes_adj_count,
+        COALESCE(SUM(p.stakes_adj_amt), 0) AS stakes_adj_amount,
+        COALESCE(SUM(p.prize), 0) AS prize_amount
+    FROM member_pnl_daily p
+    WHERE {pnl_date_filter}
     """
     frame = query_frame(sql, params)
     if frame.empty:
         return pd.Series(
             {
                 "new_registers": 0,
-                "bonus_players": 0,
+                "active_members": 0,
+                "total_gl": 0,
                 "bonus_amount": 0,
                 "commission_amount": 0,
+                "transfer_in_count": 0,
+                "transfer_in_amount": 0,
+                "transfer_out_count": 0,
+                "transfer_out_amount": 0,
+                "adjustment_count": 0,
+                "adjustment_amount": 0,
+                "stakes_count": 0,
+                "stake_amount": 0,
+                "valid_stake_amount": 0,
+                "betting_gl": 0,
+                "stakes_adj_count": 0,
+                "stakes_adj_amount": 0,
+                "prize_amount": 0,
             }
         )
     return frame.iloc[0]
