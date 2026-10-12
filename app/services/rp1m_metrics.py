@@ -190,13 +190,12 @@ def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Se
     FROM filtered
     """
     frame = query_frame(sql, params)
-    activity = _fetch_range_activity(start_date, end_date)
+    activity = _fetch_range_activity(start_date, end_date).to_dict()
     if frame.empty:
-        return activity
-    row = frame.iloc[0].copy()
-    for key, value in activity.items():
-        row[key] = value
-    return row
+        return pd.Series(activity)
+    combined = frame.iloc[0].to_dict()
+    combined.update(activity)
+    return pd.Series(combined)
 
 
 def fetch_daily_breakdown(

@@ -6,6 +6,8 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+import importlib
+
 import streamlit as st
 
 from app.config import FTD_CUTOFF_MONTH
@@ -14,7 +16,14 @@ from app.services.app_settings import (
     get_facebook_affiliate_codes,
     set_facebook_affiliate_code,
 )
-from app.services.rp1m_metrics import (
+import app.services.rp1m_metrics as rp1m_metrics
+
+# A Streamlit rerun re-reads this page but can keep the previously imported
+# service module. Reload when that module predates the bonus and register KPIs.
+if not hasattr(rp1m_metrics, "_fetch_range_activity"):
+    importlib.reload(rp1m_metrics)
+
+from app.services.rp1m_metrics import (  # noqa: E402
     backoffice_merchant_label,
     fetch_daily_breakdown,
     fetch_overview_kpis,
