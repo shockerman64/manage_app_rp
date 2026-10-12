@@ -13,6 +13,10 @@ _BACKOFFICE_TXN_FILTER = """
     AND TRIM(t.merchant) = TRIM(:backoffice_merchant)
 """
 
+# Member P&L report dates use the transaction clock minus one hour.
+# A business day runs from 01:00 through 01:00 the next morning.
+_BUSINESS_TS = "(txn_datetime_local - interval '1 hour')"
+
 _MEMBER_JOIN = """
     (
         (t.member_id IS NOT NULL AND TRIM(t.member_id) <> '' AND t.member_id = m.member_id)
@@ -38,7 +42,7 @@ effective_ftd AS (
         t.id,
         t.amount,
         t.txn_datetime_local,
-        t.txn_datetime_local::date AS txn_day,
+        ({_BUSINESS_TS})::date AS txn_day,
         t.ticket_no,
         COALESCE(t.member_id, t.login_id) AS user_key
     FROM (
@@ -165,9 +169,26 @@ def _fetch_range_activity(start_date: date | None, end_date: date | None) -> pd.
     return frame.iloc[0]
 
 
+def _with_transfer_gaps(values: dict) -> dict:
+    """P&L transfer minus approved deposits and withdrawals on the same business day."""
+    deposit_count = float(values.get("total_deposits") or 0)
+    deposit_amount = float(values.get("total_deposit_amount") or 0)
+    withdraw_count = float(values.get("total_withdraws") or 0)
+    withdraw_amount = float(values.get("total_withdraw_amount") or 0)
+    transfer_in_count = float(values.get("transfer_in_count") or 0)
+    transfer_in_amount = float(values.get("transfer_in_amount") or 0)
+    transfer_out_count = float(values.get("transfer_out_count") or 0)
+    transfer_out_amount = float(values.get("transfer_out_amount") or 0)
+    values["unmatched_in_count"] = transfer_in_count - deposit_count
+    values["unmatched_in_amount"] = transfer_in_amount - deposit_amount
+    values["unmatched_out_count"] = transfer_out_count - withdraw_count
+    values["unmatched_out_amount"] = abs(transfer_out_amount) - withdraw_amount
+    return values
+
+
 def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Series:
-    date_filter, params = _date_clauses(start_date, end_date)
-    ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_datetime_local")
+    date_filter, params = _date_clauses(start_date, end_date, column=_BUSINESS_TS)
+    ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_day")
     cutoff = ftd_cutoff_date()
     params["cutoff_date"] = cutoff
     params["cutoff_ts"] = pd.Timestamp(cutoff)
@@ -209,10 +230,11 @@ def fetch_overview_kpis(start_date: date | None, end_date: date | None) -> pd.Se
     frame = query_frame(sql, params)
     activity = _fetch_range_activity(start_date, end_date).to_dict()
     if frame.empty:
-        return pd.Series(activity)
-    combined = frame.iloc[0].to_dict()
-    combined.update(activity)
-    return pd.Series(combined)
+        combined = dict(activity)
+    else:
+        combined = frame.iloc[0].to_dict()
+        combined.update(activity)
+    return pd.Series(_with_transfer_gaps(combined))
 
 
 def fetch_daily_breakdown(
@@ -221,8 +243,8 @@ def fetch_daily_breakdown(
     *,
     facebook_affiliate_codes: list[str] | None = None,
 ) -> pd.DataFrame:
-    date_filter, params = _date_clauses(start_date, end_date)
-    ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_datetime_local")
+    date_filter, params = _date_clauses(start_date, end_date, column=_BUSINESS_TS)
+    ftd_date_filter, _ = _date_clauses(start_date, end_date, column="f.txn_day")
     member_date_filter, _ = _date_clauses(start_date, end_date, column="m.created_date")
     pnl_date_filter, _ = _date_clauses(start_date, end_date, column="report_date")
     cutoff = ftd_cutoff_date()
@@ -238,7 +260,7 @@ def fetch_daily_breakdown(
     WITH {_EFFECTIVE_FTD_CTE},
     approved AS (
         SELECT
-            txn_datetime_local::date AS day,
+            ({_BUSINESS_TS})::date AS day,
             txn_type,
             amount
         FROM transactions_normalized t
@@ -303,7 +325,11 @@ def fetch_daily_breakdown(
             COUNT(*) FILTER (WHERE COALESCE(bonus_amt, 0) <> 0) AS bonus_players,
             COALESCE(SUM(bonus_amt), 0) AS bonus_amount,
             COALESCE(SUM(comm), 0) AS commission_amount,
-            COALESCE(SUM(adjustment_amt), 0) AS adjustment_amount
+            COALESCE(SUM(adjustment_amt), 0) AS adjustment_amount,
+            COALESCE(SUM(transfer_in_count), 0) AS transfer_in_count,
+            COALESCE(SUM(transfer_in_amt), 0) AS transfer_in_amount,
+            COALESCE(SUM(transfer_out_count), 0) AS transfer_out_count,
+            COALESCE(SUM(transfer_out_amt), 0) AS transfer_out_amount
         FROM member_pnl_daily
         WHERE {pnl_date_filter}
         GROUP BY report_date
@@ -327,6 +353,10 @@ def fetch_daily_breakdown(
         COALESCE(ff.facebook_ftd_count, 0) AS facebook_ftd_count,
         COALESCE(d.withdraw_count, 0) AS withdraw_count,
         COALESCE(d.withdraw_amount, 0) AS withdraw_amount,
+        COALESCE(p.transfer_in_count, 0) - COALESCE(d.deposit_count, 0) AS unmatched_in_count,
+        COALESCE(p.transfer_in_amount, 0) - COALESCE(d.deposit_amount, 0) AS unmatched_in_amount,
+        COALESCE(p.transfer_out_count, 0) - COALESCE(d.withdraw_count, 0) AS unmatched_out_count,
+        ABS(COALESCE(p.transfer_out_amount, 0)) - COALESCE(d.withdraw_amount, 0) AS unmatched_out_amount,
         COALESCE(mc.new_registers, 0) AS new_registers,
         COALESCE(mc.affiliated_registers, 0) AS affiliated_registers,
         COALESCE(mc.facebook_registers, 0) AS facebook_registers,

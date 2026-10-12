@@ -155,7 +155,8 @@ unmatched = int(summary.get("unmatched_member_keys") or 0)
 
 section_title(
     "Overview",
-    f"Totals for **{backoffice_merchant_label()}** in the selected date range (Approved only).",
+    f"Totals for **{backoffice_merchant_label()}** in the selected date range (Approved only). "
+    "Deposits, withdrawals, and FTD use the P&L business day: 01:00 through 01:00 the next morning.",
 )
 row1 = st.columns(3)
 row2 = st.columns(3)
@@ -192,6 +193,27 @@ transfer[0].metric("# In", format_count(summary.get("transfer_in_count")))
 transfer[1].metric("In Amount", format_money(summary.get("transfer_in_amount")))
 transfer[2].metric("# Out", format_count(summary.get("transfer_out_count")))
 transfer[3].metric("Out Amount", format_money(summary.get("transfer_out_amount")))
+transfer_gap = st.columns(4)
+transfer_gap[0].metric(
+    "Unmatched In",
+    format_count(summary.get("unmatched_in_count")),
+    help="P&L transfer-in count minus approved deposits on the same business day.",
+)
+transfer_gap[1].metric(
+    "Unmatched In Amount",
+    format_money(summary.get("unmatched_in_amount")),
+    help="P&L transfer-in amount minus approved deposits. Manual credits and deposits not yet imported stay here.",
+)
+transfer_gap[2].metric(
+    "Unmatched Out",
+    format_count(summary.get("unmatched_out_count")),
+    help="P&L transfer-out count minus approved withdrawals on the same business day.",
+)
+transfer_gap[3].metric(
+    "Unmatched Out Amount",
+    format_money(summary.get("unmatched_out_amount")),
+    help="P&L transfer-out amount minus approved withdrawals. Uses the absolute transfer-out amount.",
+)
 
 st.markdown("**Adjustment**")
 adjustment = st.columns(4)
@@ -211,7 +233,8 @@ stakes_extra[2].metric("Prize", format_money(summary.get("prize_amount")))
 st.caption(
     "Member activity, transfer, adjustment, and stakes use the daily Member P&L import. "
     "New registers use the Members registry (Date Created). "
-    "Active Members counts each member once in the selected range."
+    "Active Members counts each member once in the selected range. "
+    "A positive unmatched amount means the P&L includes money the approved transaction rows do not."
 )
 
 if ftd_enabled and unmatched > 0:
@@ -240,8 +263,8 @@ with affiliate_cols[1]:
 
 section_title(
     "Daily Breakdown",
-    "One row per calendar day in the selected range. "
-    "Players with Bonus, Bonus Amount, Commission, and Adjustment come from the daily Member P&L import.",
+    "One row per P&L business day in the selected range (01:00 through 01:00 the next morning). "
+    "Unmatched in and out are the P&L transfer minus approved deposits and withdrawals on that day.",
 )
 if facebook_affiliate_codes:
     codes_label = ", ".join(f"**{code}**" for code in facebook_affiliate_codes)
@@ -276,6 +299,10 @@ else:
             "facebook_ftd_count": "Facebook FTD Count",
             "withdraw_count": "Withdraw Count",
             "withdraw_amount": "Withdraw Amount",
+            "unmatched_in_count": "Unmatched In",
+            "unmatched_in_amount": "Unmatched In Amount",
+            "unmatched_out_count": "Unmatched Out",
+            "unmatched_out_amount": "Unmatched Out Amount",
             "new_registers": "New Registers",
             "affiliated_registers": "Affiliated Registers",
             "facebook_registers": "Facebook Registers",
@@ -300,6 +327,8 @@ else:
                     "Deposit Amount",
                     "FTD Amount",
                     "Withdraw Amount",
+                    "Unmatched In Amount",
+                    "Unmatched Out Amount",
                     "Bonus Amount",
                     "Commission",
                     "Adjustment",
